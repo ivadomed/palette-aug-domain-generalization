@@ -2,11 +2,39 @@
 
 set -euo pipefail
 
-# Baseline segmenters (saved to checkpoints/baseline/)
-# CUDA_VISIBLE_DEVICES=1 python scripts/train_segmenter.py --baseline-contrast t1w
-# CUDA_VISIBLE_DEVICES=1 python scripts/train_segmenter_bigaug.py --baseline-contrast t1w
+# Ensure we're using the optimized TF32 precision under the hood via the training script.
+SLOT_ID="${1:-3}"
+VERSION="${2:-v5}"
+CONTRAST="${3:-t2w}"
 
-# Generator-augmented segmenters (saved to checkpoints/<version>/)
-# CUDA_VISIBLE_DEVICES=2 python scripts/train_segmenter.py --use-generator --baseline-contrast t1w --gen-version v2 --version v2 --gen-weights checkpoints/v2/mri_generator_t1w_epoch_30.pth
-# CUDA_VISIBLE_DEVICES=2 python scripts/train_segmenter.py --use-generator --baseline-contrast t1w --gen-version v3 --version v3 --gen-weights checkpoints/v3/mri_generator_t1w_epoch_30.pth --aug-prob 1.0
-CUDA_VISIBLE_DEVICES=3 python scripts/train_segmenter.py --use-generator --baseline-contrast t1w --gen-version v3 --version v3 --gen-weights checkpoints/v3/mri_generator_t1w_epoch_30.pth --aug-prob-train 0.7 --aug-prob-val 1.0
+# If no specific weight provided, default to the newest generator last.ckpt.
+# Prefer new run layout, then fall back to legacy versioned folders.
+DEFAULT_CKPT=$(ls -t \
+    checkpoints/${VERSION}/generator/${CONTRAST}/run*/last.ckpt \
+    checkpoints/generator/${CONTRAST}/run*/last.ckpt \
+    checkpoints/${VERSION}/generator/${CONTRAST}/last.ckpt \
+    checkpoints/${VERSION}/generator/${CONTRAST}/*.ckpt \
+    2>/dev/null | head -n 1 || echo "")
+CKPT_PATH="${4:-$DEFAULT_CKPT}"
+
+# Example Baseline segmenter run
+# set_slot "${SLOT_ID}" CUDA_VISIBLE_DEVICES="${SLOT_ID}" .venv/bin/python scripts/train_segmenter.py \
+#     version="${VERSION}" \
+#     data.source_contrast="${CONTRAST}" \
+#     model.segmenter.use_generator=false \
+#     training.resume=false \
+#     training.devices=1 \
+#     training.precision=16-mixed
+
+# Example Generator-augmented segmenter run
+set_slot "${SLOT_ID}" CUDA_VISIBLE_DEVICES="${SLOT_ID}" .venv/bin/python scripts/train_segmenter.py \
+    version="${VERSION}" \
+    data.source_contrast="${CONTRAST}" \
+    model.segmenter.use_generator=true \
+    model.segmenter.gen_version="${VERSION}" \
+    model.segmenter.gen_weights="${CKPT_PATH}" \
+    model.segmenter.fully_artificial=true \
+    training.resume=false \
+    training.devices=1 \
+    training.precision=16-mixed
+
