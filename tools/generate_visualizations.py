@@ -16,6 +16,7 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 from hydra import initialize_config_dir, compose
+from hydra.utils import instantiate
 from omegaconf import DictConfig, open_dict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,9 @@ from src.generator import MRI_Synthesis_Net
 from src.histogram_ops import DifferentiableHistogram3D
 from src.lightning_modules import CompiledSynthesisWrapper, _extract_normalized_state_dict
 
+from monai.transforms import Compose
+
+
 def _resolve_path(path_like: str) -> Path:
     """Resolve path relative to PROJECT_ROOT if not absolute."""
     path = Path(path_like)
@@ -35,59 +39,64 @@ def _resolve_path(path_like: str) -> Path:
     return PROJECT_ROOT / path
 
 
-def _parse_checkpoint_metadata(checkpoint_path: Path) -> tuple[str, str]:
-    """Parse gen_version and model_id from checkpoint directory path."""
-    checkpoint_path = checkpoint_path.resolve()
-    
-    try:
-        parts = list(checkpoint_path.parts)
+def _nested_get(mapping: dict | None, keys: list[str], default=None):
+    cur = mapping
+    for key in keys:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key)
+    return cur if cur is not None else default
+
+
+def _checkpoint_metadata(checkpoint_path: Path, checkpoint: dict | None) -> tuple[str, str, str]:
+    hyper = checkpoint.get("hyper_parameters") if isinstance(checkpoint, dict) else None
+    if not isinstance(hyper, dict):
+        hyper = checkpoint.get("hparams") if isinstance(checkpoint, dict) else None
+
+    version = _nested_get(hyper, ["version"], default=None)
+    if version is None:
+        version = _nested_get(hyper, ["model", "generator", "gen_version"], default=None)
+    contrast = _nested_get(hyper, ["data", "source_contrast"], default=None)
+
+    if version is None or contrast is None:
+        parts = list(checkpoint_path.resolve().parts)
         if "generator" in parts:
             gen_idx = parts.index("generator")
-            version_idx = gen_idx - 2
-            gen_version = parts[version_idx]
-            contrast_idx = gen_idx + 1
-            contrast = parts[contrast_idx]
-            run_dir = checkpoint_path.parent.name
-            model_id = f"{contrast}_{run_dir}"
-            return gen_version, model_id
-        
-        # Fallback to old structure
-        filename = checkpoint_path.stem
-        version = next((p for p in parts if p.startswith("v") and p[1:].isdigit()), None)
-        
-        if version and filename.startswith("mri_generator_"):
-            parts_split = filename.split("_")
-            contrast = parts_split[2]
-            epoch = parts_split[-1]
-            model_id = f"{contrast}_epoch{epoch}"
-            return version, model_id
-            
-        raise ValueError(f"Cannot parse filename: {filename}")
-    except Exception as e:
-        raise ValueError(f"Failed to parse checkpoint path: {checkpoint_path}\nError: {e}")
+            if version is None and gen_idx >= 1:
+                version = parts[gen_idx - 1]
+            if contrast is None and gen_idx + 1 < len(parts):
+                contrast = parts[gen_idx + 1]
+
+    if version is None:
+        version = "unknown_version"
+    if contrast is None:
+        contrast = "t1w"
+
+    run_dir = checkpoint_path.parent.name
+    model_id = f"{contrast}_{run_dir}"
+    return str(version), str(model_id), str(contrast)
 
 
-def _load_generator(checkpoint_path: Path, cfg: DictConfig) -> tuple[MRI_Synthesis_Net, str]:
+def _load_generator(checkpoint_path: Path, cfg: DictConfig) -> tuple[MRI_Synthesis_Net, str, str, dict | None]:
     """Load the generator model from checkpoint."""
     checkpoint_path = _resolve_path(str(checkpoint_path))
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    
-    gen_version, _ = _parse_checkpoint_metadata(checkpoint_path)
-    
+
     generator = MRI_Synthesis_Net(
         in_channels=int(cfg.model.generator.in_channels),
         out_channels=int(cfg.model.generator.out_channels),
         base_filters=int(cfg.model.generator.base_filters),
     )
-    
+
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    gen_version, _, checkpoint_contrast = _checkpoint_metadata(checkpoint_path, checkpoint)
     state_dict = _extract_normalized_state_dict(checkpoint)
     generator.load_state_dict(state_dict, strict=True)
-    
+
     print(f"Loaded generator from: {checkpoint_path}")
     print(f"Detected gen_version: {gen_version}")
-    return generator, gen_version
+    return generator, gen_version, checkpoint_contrast, checkpoint
 
 def _save_volume(volume: torch.Tensor, output_path: Path, affine: torch.Tensor | None = None) -> None:
     """Saves a 3D tensor to NIfTI format properly using nibabel."""
@@ -114,18 +123,21 @@ def main(args: argparse.Namespace) -> None:
     with initialize_config_dir(version_base=None, config_dir=config_dir, job_name="visualize"):
         cfg = compose(config_name=config_name)
 
-    # =====================================================================
-    # THE FIX: Override config to force val set creation and KILL caching
-    # =====================================================================
+    # Force val dataset creation with lightweight loader settings for local visualization.
     with open_dict(cfg):
-        cfg.task = "segmenter"           # Forces datamodule to build val_dataset
-        cfg.data.cache_rate = 0.0        # Prevents loading the whole dataset into RAM
-        cfg.data.num_workers = 0         # Prevents multiprocess hanging for small jobs
-        cfg.data.val_batch_size = 1      # Process one by one for clean saving
+        cfg.task = "segmenter"
+        cfg.data.cache_rate = 0.0
+        cfg.data.num_workers = 0
+        cfg.data.val_batch_size = 1
     
-    generator, gen_version = _load_generator(checkpoint_path, cfg)
-    _, model_id = _parse_checkpoint_metadata(checkpoint_path)
+    generator, gen_version, checkpoint_contrast, checkpoint = _load_generator(checkpoint_path, cfg)
+    _, model_id, _ = _checkpoint_metadata(checkpoint_path, checkpoint)
     
+    with open_dict(cfg):
+        # Force the dataset to use the contrast the model was trained on.
+        cfg.data.source_contrast = checkpoint_contrast
+        
+        
     base_output_dir = PROJECT_ROOT / "results" / "visualizations" / gen_version / model_id
     base_output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -135,17 +147,47 @@ def main(args: argparse.Namespace) -> None:
     # Instantiate datamodule with the overridden config
     datamodule = BraTSDataModule(cfg)
     datamodule.setup(stage="fit")
+    
+    if datamodule.val_dataset is None:
+        raise RuntimeError("Validation dataset is unavailable. Ensure cfg.task is not 'generator'.")
+
+    underlying_dataset = datamodule.val_dataset
+    while hasattr(underlying_dataset, "dataset"):
+        underlying_dataset = underlying_dataset.dataset
+
+    dataset_transform = getattr(underlying_dataset, "transform", None)
+    if dataset_transform is not None and hasattr(dataset_transform, "transforms"):
+        # Keep preprocessing/intensity steps but skip spatial shape-altering ops for full-volume export.
+        inference_transforms = []
+        for transform in dataset_transform.transforms:
+            t_name = type(transform).__name__
+            if not any(keyword in t_name for keyword in ["Crop", "Pad", "Resize"]):
+                inference_transforms.append(transform)
+        underlying_dataset.transform = Compose(inference_transforms)
+    
     val_dataloader = datamodule.val_dataloader()
     
     histogram_module = DifferentiableHistogram3D(
         num_bins=int(cfg.model.generator.num_bins),
         value_range=(0.0, 1.0),
     ).to(device).eval()
+
+    target_generator_cfg = cfg.model.generator.get(
+        "target_generator",
+        {"_target_": "src.target_generators.LegacyChunkTargetGenerator"},
+    )
+    guidance_perturber_cfg = cfg.model.generator.get("guidance_perturber", None)
+    apply_guidance_blur = bool(cfg.model.generator.get("apply_guidance_blur", True))
+
+    target_generator = instantiate(target_generator_cfg)
+    guidance_perturber = instantiate(guidance_perturber_cfg)
     
     synthesis_wrapper = CompiledSynthesisWrapper(
         generator=generator,
         hist_module=histogram_module,
-        gen_version=gen_version,
+        target_generator=target_generator,
+        guidance_perturber=guidance_perturber,
+        apply_guidance_blur=apply_guidance_blur,
     ).to(device).eval()
     
     sample_count = 0

@@ -6,6 +6,7 @@ from typing import Any
 import re
 
 import matplotlib.pyplot as plt
+from hydra.utils import instantiate
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -25,6 +26,7 @@ from src.histogram_ops import (
     apply_gaussian_blur_3d,
     generate_unified_targets,
 )
+from src.bigaug_augmentations import build_bigaug_augmentation
 from src.losses import (
     DiceEdgeLoss3D,
     DifferentiableWassersteinLoss,
@@ -36,65 +38,43 @@ from src.kornia_augmentations import RandomFourierAmplitude3D, build_kornia_augm
 from src.filters import AnatomicalUnsharpMask3D
 from src.intensity_ops import (
     RandomAnisotropicDegradation3D,
-    RandomBezierIntensityWarp,
-    RandomGMMHistogramMatching,
-    RandomSoftQuantileShuffling,
 )
-from src.noise_ops import generate_fractal_noise_3d
+from src.guidance_perturbers import BaseGuidancePerturber, IdentityGuidancePerturber
+from src.target_generators import BaseTargetGenerator
 
 
 
 
 class CompiledSynthesisWrapper(nn.Module):
-    def __init__(self, generator, hist_module, gen_version):
+    def __init__(
+        self,
+        generator: nn.Module,
+        hist_module: DifferentiableHistogram3D,
+        target_generator: BaseTargetGenerator,
+        guidance_perturber: BaseGuidancePerturber | None,
+        apply_guidance_blur: bool,
+    ):
         super().__init__()
         self.generator = generator
         self.hist_module = hist_module
-        self.gen_version = gen_version
-        self.noise_strength = 0.2
-        self.bezier_warp = RandomBezierIntensityWarp(p=1.0)
-        self.gmm_hist_match = RandomGMMHistogramMatching(p=1.0)
-        self.soft_quantile_shuffle = RandomSoftQuantileShuffling(p=1.0)
+        self.target_generator = target_generator
+        self.guidance_perturber = guidance_perturber or IdentityGuidancePerturber()
+        self.apply_guidance_blur = bool(apply_guidance_blur)
 
     def forward(self, x: torch.Tensor, 
                 num_bins: int, num_chunks: int, dark_threshold: float):
-        
-        if self.gen_version in ("v3", "v4"):
-            target_hist, _, guidance_map = generate_unified_targets(
-                input_images=x,
-                num_bins=num_bins,
-                num_chunks=num_chunks,
-                dark_threshold=dark_threshold,
-                hist_module=self.hist_module,
-                return_guidance_map=True,
-                gen_version=self.gen_version,
-            )
-        else:
-            target_hist, _, guidance_map = generate_unified_targets(
-                input_images=x,
-                num_bins=num_bins,
-                num_chunks=num_chunks,
-                dark_threshold=dark_threshold,
-                hist_module=self.hist_module,
-                gen_version=self.gen_version,
-            )
+        _, _, guidance_map = self.target_generator(
+            input_images=x,
+            num_bins=num_bins,
+            num_chunks=num_chunks,
+            dark_threshold=dark_threshold,
+            hist_module=self.hist_module,
+            return_guidance_map=True,
+        )
 
-        if self.gen_version == "v9":
-            with torch.no_grad():
-                procedural_noise = generate_fractal_noise_3d(
-                    guidance_map.detach(),
-                    noise_dtype=torch.float16,
-                )
-            guidance_map = (guidance_map + self.noise_strength * procedural_noise).clamp(0.0, 1.0)
+        guidance_map = self.guidance_perturber(guidance_map)
 
-        if self.gen_version == "v11":
-            guidance_map = self.bezier_warp(guidance_map)
-        if self.gen_version == "v12":
-            guidance_map = self.gmm_hist_match(guidance_map)
-        if self.gen_version == "v13":
-            guidance_map = self.soft_quantile_shuffle(guidance_map)
-
-        if self.gen_version != "v1":
+        if self.apply_guidance_blur:
             guidance_map = apply_gaussian_blur_3d(guidance_map)
 
         generator_input = torch.cat([x, guidance_map], dim=1)
@@ -140,7 +120,19 @@ def _extract_normalized_state_dict(checkpoint: object) -> OrderedDict[str, torch
 
 
 class CompiledLossWrapper(nn.Module):
-    def __init__(self, model, histogram_module, wasserstein_loss_fn, edge_loss_fn, tv_loss_fn, range_loss_fn, guidance_loss_fn, gen_version: str):
+    def __init__(
+        self,
+        model,
+        histogram_module,
+        wasserstein_loss_fn,
+        edge_loss_fn,
+        tv_loss_fn,
+        range_loss_fn,
+        guidance_loss_fn,
+        target_generator: BaseTargetGenerator,
+        guidance_perturber: BaseGuidancePerturber | None,
+        apply_guidance_blur: bool,
+    ):
         super().__init__()
         self.model = model
         self.histogram_module = histogram_module
@@ -149,11 +141,9 @@ class CompiledLossWrapper(nn.Module):
         self.tv_loss_fn = tv_loss_fn
         self.range_loss_fn = range_loss_fn
         self.guidance_loss_fn = guidance_loss_fn
-        self.gen_version = gen_version
-        self.noise_strength = 0.2
-        self.bezier_warp = RandomBezierIntensityWarp(p=1.0)
-        self.gmm_hist_match = RandomGMMHistogramMatching(p=1.0)
-        self.soft_quantile_shuffle = RandomSoftQuantileShuffling(p=1.0)
+        self.target_generator = target_generator
+        self.guidance_perturber = guidance_perturber or IdentityGuidancePerturber()
+        self.apply_guidance_blur = bool(apply_guidance_blur)
 
     def forward(self, x: torch.Tensor, 
                 num_bins: int, num_chunks: int, dark_threshold: float,
@@ -161,39 +151,27 @@ class CompiledLossWrapper(nn.Module):
                 w_edge: float, w_tv: float, w_range: float, w_wass: float,
                 w_guide_blur: float, w_guide_sharp: float) -> dict[str, torch.Tensor]:
         
-        # Generate targets once - reuses guidance_map internally
-        target_hist, perms, guidance_map = generate_unified_targets(
+        target_hist, perms, guidance_map = self.target_generator(
             input_images=x,
             num_bins=num_bins,
             num_chunks=num_chunks,
             dark_threshold=dark_threshold,
             hist_module=self.histogram_module,
-            gen_version=self.gen_version,
+            return_guidance_map=True,
         )
-        
-        guidance_for_generator = guidance_map
-        if self.gen_version == "v9":
-            with torch.no_grad():
-                procedural_noise = generate_fractal_noise_3d(
-                    guidance_map.detach(),
-                    noise_dtype=torch.float16,
-                )
-            guidance_for_generator = (guidance_for_generator + self.noise_strength * procedural_noise).clamp(0.0, 1.0)
 
-        if self.gen_version == "v11":
-            guidance_for_generator = self.bezier_warp(guidance_for_generator)
-        if self.gen_version == "v12":
-            guidance_for_generator = self.gmm_hist_match(guidance_for_generator)
-        if self.gen_version == "v13":
-            guidance_for_generator = self.soft_quantile_shuffle(guidance_for_generator)
+        guidance_for_generator = self.guidance_perturber(guidance_map)
 
         # Stop propagating gradient through guidance map blur
         bg_guidance = guidance_for_generator.detach()
-        blurred_guidance = apply_gaussian_blur_3d(
-            bg_guidance,
-            kernel_size=guidance_blur_k,
-            sigma=guidance_blur_s,
-        )
+        if self.apply_guidance_blur:
+            blurred_guidance = apply_gaussian_blur_3d(
+                bg_guidance,
+                kernel_size=guidance_blur_k,
+                sigma=guidance_blur_s,
+            )
+        else:
+            blurred_guidance = bg_guidance
         # Cannot conditionally branch on config inside compile well if we want static graph,
         # but x comes in channels_last_3d so simple operations keep it.
         blurred_guidance = blurred_guidance.contiguous(memory_format=torch.channels_last_3d)
@@ -275,11 +253,16 @@ class MRISynthesisLightning(pl.LightningModule):
             kernel_size=int(cfg.model.generator.guidance_blur.kernel_size),
             sigma=float(cfg.model.generator.guidance_blur.sigma),
         )
+
+        target_generator = instantiate(self._generator_target_generator_cfg())
+        guidance_perturber = instantiate(self._generator_guidance_perturber_cfg())
         
         self.compiled_wrapper = CompiledLossWrapper(
             self.model, self.histogram_module, self.wasserstein_loss_fn,
             self.edge_loss_fn, self.tv_loss_fn, self.range_loss_fn, self.guidance_loss_fn,
-            self._resolved_generator_version(),
+            target_generator,
+            guidance_perturber,
+            self._generator_apply_guidance_blur(),
         )
         if bool(self.cfg.training.generator.compile_model) and hasattr(torch, "compile"):
             self.compiled_wrapper = torch.compile(self.compiled_wrapper, mode="reduce-overhead")
@@ -300,6 +283,40 @@ class MRISynthesisLightning(pl.LightningModule):
         if configured is None:
             return str(self.cfg.version)
         return str(configured)
+
+    def _default_target_generator_cfg(self, version: str) -> dict[str, Any]:
+        version = str(version)
+        if version in ("v8", "v9", "v10", "v11"):
+            return {"_target_": "src.target_generators.V8GridTargetGenerator", "grid_size": [4, 4, 4]}
+        if version == "v15":
+            return {
+                "_target_": "src.target_generators.V15GridTargetGenerator",
+                "grid_size": [4, 4, 4],
+                "background_threshold": 0.01,
+            }
+        if version == "v17_micro_anchor":
+            return {
+                "_target_": "src.target_generators.V17MicroAnchorTargetGenerator",
+                "tau": 0.05,
+                "num_peaks": 4,
+                "background_threshold": 0.01,
+            }
+        return {"_target_": "src.target_generators.LegacyChunkTargetGenerator"}
+
+    def _generator_target_generator_cfg(self) -> Any:
+        if hasattr(self.cfg.model.generator, "target_generator") and self.cfg.model.generator.target_generator is not None:
+            return self.cfg.model.generator.target_generator
+        return self._default_target_generator_cfg(self._resolved_generator_version())
+
+    def _generator_guidance_perturber_cfg(self) -> Any:
+        if hasattr(self.cfg.model.generator, "guidance_perturber"):
+            return self.cfg.model.generator.guidance_perturber
+        return None
+
+    def _generator_apply_guidance_blur(self) -> bool:
+        if hasattr(self.cfg.model.generator, "apply_guidance_blur"):
+            return bool(self.cfg.model.generator.apply_guidance_blur)
+        return self._resolved_generator_version() not in ("v1", "v17_micro_anchor")
 
     def _uses_fourier_generator(self) -> bool:
         return self._resolved_generator_version() in ("v7", "v8", "v9", "v10", "v11")
@@ -527,14 +544,36 @@ class MRISegmenterLightning(pl.LightningModule):
             strides=tuple(int(s) for s in cfg.model.segmenter.strides),
             num_res_units=int(cfg.model.segmenter.num_res_units),
         )
+        
+        # Load pretrained checkpoint if provided
+        pretrained_ckpt_path = getattr(cfg.model.segmenter, 'pretrained_ckpt_path', None)
+        if pretrained_ckpt_path is not None:
+            self._load_pretrained_checkpoint(str(pretrained_ckpt_path))
+        
+        # Freeze encoder if requested
+        freeze_encoder = getattr(cfg.model.segmenter, 'freeze_encoder', False)
+        if freeze_encoder:
+            self._freeze_encoder()
+        
         if bool(cfg.model.segmenter.channels_last_3d):
             self.segmenter = self.segmenter.to(memory_format=torch.channels_last_3d)
 
-        self.loss_fn = DiceCELoss(sigmoid=True)
+        self._num_seg_classes = int(cfg.model.segmenter.out_channels)
+        self._is_multiclass = self._num_seg_classes > 1
+        if self._is_multiclass:
+            self.loss_fn = DiceCELoss(
+                to_onehot_y=True,
+                softmax=True,
+                include_background=False,
+            )
+            self.dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
+        else:
+            self.loss_fn = DiceCELoss(sigmoid=True)
+            self.dice_metric = DiceMetric(include_background=False, reduction="mean")
+
         self.compiled_segmenter = CompiledSegmenterWrapper(self.segmenter, self.loss_fn)
         if bool(self.cfg.model.segmenter.compile_model) and hasattr(torch, "compile"):
             self.compiled_segmenter = torch.compile(self.compiled_segmenter, mode="max-autotune-no-cudagraphs")
-        self.dice_metric = DiceMetric(include_background=False, reduction="mean")
 
         self.generator: MRI_Synthesis_Net | None = None
         self.hist_module: DifferentiableHistogram3D | None = None
@@ -544,9 +583,71 @@ class MRISegmenterLightning(pl.LightningModule):
         self._anatomical_unsharp: nn.Module | None = None
         self._anisotropic_degradation: nn.Module | None = None
 
+    def _load_pretrained_checkpoint(self, checkpoint_path: str) -> None:
+        """Load pretrained segmenter weights from a checkpoint file."""
+        print(f"Loading pretrained segmenter checkpoint from: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        state_dict = _extract_normalized_state_dict(checkpoint)
+        
+        # The state dict may have "segmenter." prefix from Lightning; extract just the UNet weights
+        segmenter_state_dict = OrderedDict()
+        for key, value in state_dict.items():
+            if key.startswith("segmenter."):
+                # Strip the "segmenter." prefix
+                new_key = key[len("segmenter."):]
+                segmenter_state_dict[new_key] = value
+            elif not key.startswith("generator."):
+                # Include keys without generator prefix (these are our UNet weights)
+                segmenter_state_dict[key] = value
+
+        model_state = self.segmenter.state_dict()
+        compatible_state_dict = OrderedDict()
+        skipped_shape = []
+        skipped_missing = []
+        for key, value in segmenter_state_dict.items():
+            if key not in model_state:
+                skipped_missing.append(key)
+                continue
+            if model_state[key].shape != value.shape:
+                skipped_shape.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+                continue
+            compatible_state_dict[key] = value
+
+        missing_after_load, unexpected_after_load = self.segmenter.load_state_dict(
+            compatible_state_dict,
+            strict=False,
+        )
+
+        print(
+            "Pretrained checkpoint loaded with compatibility filtering: "
+            f"loaded={len(compatible_state_dict)}, "
+            f"skipped_shape={len(skipped_shape)}, "
+            f"skipped_missing={len(skipped_missing)}, "
+            f"missing_after_load={len(missing_after_load)}, "
+            f"unexpected_after_load={len(unexpected_after_load)}"
+        )
+        if skipped_shape:
+            for key, src_shape, dst_shape in skipped_shape[:8]:
+                print(f"  - shape mismatch skipped: {key} src={src_shape} dst={dst_shape}")
+
+    def _freeze_encoder(self) -> None:
+        """Freeze the encoder blocks of the U-Net segmenter."""
+        # MONAI UNet names down-path params as:
+        # - model.0.* (first down block)
+        # - *.submodule.0.* (recursive down blocks)
+        # Keep bottleneck/decoder trainable.
+        num_frozen = 0
+        for name, param in self.segmenter.named_parameters():
+            if name.startswith("model.0.") or ".submodule.0." in name:
+                param.requires_grad = False
+                num_frozen += 1
+        print(f"Froze {num_frozen} encoder parameters")
 
     def _ensure_gpu_aug(self) -> None:
         if self._gpu_aug is not None:
+            return
+        if str(self.cfg.task) == "segmenter" and str(self.cfg.version) == "v16_bigaug":
+            self._gpu_aug = build_bigaug_augmentation().to(self.device)
             return
         self._gpu_aug = build_kornia_augmentation(self.cfg, task="segmenter").to(self.device)
 
@@ -644,7 +745,26 @@ class MRISegmenterLightning(pl.LightningModule):
             generator_weights = str(latest_ckpt)
             print(f"Loading generator from: {generator_weights}")
 
-        self.generator = MRI_Synthesis_Net(in_channels=2, out_channels=1)
+        if not Path(generator_weights).exists():
+            project_root = Path(__file__).resolve().parents[1]
+            gen_version = self._resolved_segmenter_gen_version()
+            generator_base = project_root / "checkpoints" / str(gen_version) / "generator"
+            available_contrasts: list[str] = []
+            if generator_base.exists():
+                available_contrasts = sorted([p.name for p in generator_base.iterdir() if p.is_dir()])
+            raise FileNotFoundError(
+                "Missing generator checkpoint for segmenter synthesis path. "
+                f"Expected checkpoint: {generator_weights}. "
+                f"Requested source contrast: {self.cfg.data.source_contrast}. "
+                f"Available generator contrasts for {gen_version}: {available_contrasts}. "
+                "Either run generator training first for the requested contrast or switch to an available contrast/version."
+            )
+
+        self.generator = MRI_Synthesis_Net(
+            in_channels=2,
+            out_channels=1,
+            base_filters=int(self.cfg.model.generator.base_filters),
+        )
         if bool(self.cfg.model.segmenter.channels_last_3d):
             self.generator = self.generator.to(memory_format=torch.channels_last_3d)
 
@@ -661,9 +781,12 @@ class MRISegmenterLightning(pl.LightningModule):
         self.compiled_synthesis = CompiledSynthesisWrapper(
             self.generator,
             self.hist_module,
-            self._resolved_segmenter_gen_version(),
+            instantiate(self._segmenter_target_generator_cfg()),
+            instantiate(self._segmenter_guidance_perturber_cfg()),
+            bool(self._segmenter_apply_guidance_blur()),
         )
-        if bool(self.cfg.model.segmenter.compile_model) and hasattr(torch, "compile"):
+        compile_synthesis = bool(getattr(self.cfg.model.segmenter, "compile_synthesis", self.cfg.model.segmenter.compile_model))
+        if compile_synthesis and hasattr(torch, "compile"):
             self.compiled_synthesis = torch.compile(self.compiled_synthesis, mode="reduce-overhead")
         self._generator_is_ready = True
 
@@ -675,6 +798,27 @@ class MRISegmenterLightning(pl.LightningModule):
         if configured is None:
             return str(self.cfg.version)
         return str(configured)
+
+    def _segmenter_target_generator_cfg(self) -> Any:
+        if hasattr(self.cfg.model.segmenter, "target_generator") and self.cfg.model.segmenter.target_generator is not None:
+            return self.cfg.model.segmenter.target_generator
+        if hasattr(self.cfg.model.generator, "target_generator") and self.cfg.model.generator.target_generator is not None:
+            return self.cfg.model.generator.target_generator
+        return self._default_target_generator_cfg(self._resolved_segmenter_gen_version())
+
+    def _segmenter_guidance_perturber_cfg(self) -> Any:
+        if hasattr(self.cfg.model.segmenter, "guidance_perturber"):
+            return self.cfg.model.segmenter.guidance_perturber
+        if hasattr(self.cfg.model.generator, "guidance_perturber"):
+            return self.cfg.model.generator.guidance_perturber
+        return None
+
+    def _segmenter_apply_guidance_blur(self) -> bool:
+        if hasattr(self.cfg.model.segmenter, "apply_guidance_blur"):
+            return bool(self.cfg.model.segmenter.apply_guidance_blur)
+        if hasattr(self.cfg.model.generator, "apply_guidance_blur"):
+            return bool(self.cfg.model.generator.apply_guidance_blur)
+        return self._resolved_segmenter_gen_version() not in ("v1", "v17_micro_anchor")
 
     def _segmenter_uses_fourier_generator(self) -> bool:
         return self._resolved_segmenter_gen_version() in ("v7", "v8", "v9", "v10", "v11")
@@ -733,6 +877,17 @@ class MRISegmenterLightning(pl.LightningModule):
         if bool(self.cfg.model.segmenter.channels_last_3d):
             x = x.to(memory_format=torch.channels_last_3d)
         return x
+
+    def _prepare_segmentation_target(self, label: torch.Tensor) -> torch.Tensor:
+        y = self._to_plain_tensor(label).long()
+        label_mapping = getattr(self.cfg.data, "label_mapping", None)
+        if label_mapping is not None:
+            for src, dst in dict(label_mapping).items():
+                y = torch.where(y == int(src), torch.full_like(y, int(dst)), y)
+        if self._is_multiclass:
+            y = y.clamp(min=0, max=self._num_seg_classes - 1)
+            return y
+        return (y > 0).float()
 
     def _build_generator_guidance(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         assert self.hist_module is not None
@@ -803,6 +958,14 @@ class MRISegmenterLightning(pl.LightningModule):
         return synthesized.clone().float(), True
 
     def configure_optimizers(self) -> dict[str, Any]:
+        total_params = sum(p.numel() for p in self.segmenter.parameters())
+        trainable_params = sum(p.numel() for p in self.segmenter.parameters() if p.requires_grad)
+        frozen_params = total_params - trainable_params
+        print(
+            "Segmenter parameter summary: "
+            f"total={total_params}, trainable={trainable_params}, frozen={frozen_params}"
+        )
+
         optimizer = torch.optim.AdamW(
             self.segmenter.parameters(),
             lr=float(self.cfg.training.lr.segmenter),
@@ -828,8 +991,8 @@ class MRISegmenterLightning(pl.LightningModule):
             torch.compiler.cudagraph_mark_step_begin()
             
         x = self._to_plain_tensor(batch["image"])
-        y = (self._to_plain_tensor(batch["label"]) > 0).float()
-        if bool(self.cfg.model.segmenter.channels_last_3d):
+        y = self._prepare_segmentation_target(batch["label"])
+        if bool(self.cfg.model.segmenter.channels_last_3d) and not self._is_multiclass:
             y = y.to(memory_format=torch.channels_last_3d)
 
         unet_input, used_generator = self._maybe_apply_generator(
@@ -848,16 +1011,22 @@ class MRISegmenterLightning(pl.LightningModule):
 
             supervised_loss = self.loss_fn(logits_synth, y)
 
-            eps = torch.finfo(logits_synth.dtype).eps
-            raw_prob = torch.sigmoid(logits_raw.detach()).clamp(min=eps, max=1.0 - eps)
-            synth_prob = torch.sigmoid(logits_synth).clamp(min=eps, max=1.0 - eps)
+            if logits_synth.shape[1] == 1:
+                eps = torch.finfo(logits_synth.dtype).eps
+                raw_prob = torch.sigmoid(logits_raw.detach()).clamp(min=eps, max=1.0 - eps)
+                synth_prob = torch.sigmoid(logits_synth).clamp(min=eps, max=1.0 - eps)
 
-            # Memory-lean Bernoulli KL: KL(p_raw || p_synth) without channel concatenation.
-            consistency_map = raw_prob * (torch.log(raw_prob) - torch.log(synth_prob))
-            consistency_map = consistency_map + (1.0 - raw_prob) * (
-                torch.log(1.0 - raw_prob) - torch.log(1.0 - synth_prob)
-            )
-            consistency_loss = consistency_map.mean()
+                # Memory-lean Bernoulli KL: KL(p_raw || p_synth) without channel concatenation.
+                consistency_map = raw_prob * (torch.log(raw_prob) - torch.log(synth_prob))
+                consistency_map = consistency_map + (1.0 - raw_prob) * (
+                    torch.log(1.0 - raw_prob) - torch.log(1.0 - synth_prob)
+                )
+                consistency_loss = consistency_map.mean()
+            else:
+                raw_prob = torch.softmax(logits_raw.detach(), dim=1)
+                synth_log_prob = torch.log_softmax(logits_synth, dim=1)
+                consistency_loss = F.kl_div(synth_log_prob, raw_prob, reduction="batchmean")
+
             consistency_weight = float(self.cfg.training.segmenter.get("consistency_loss_weight", 0.1))
             loss = supervised_loss + consistency_weight * consistency_loss
             self.log("train/loss_supervised", supervised_loss, on_step=True, on_epoch=False)
@@ -879,11 +1048,20 @@ class MRISegmenterLightning(pl.LightningModule):
                     train_logits = self.segmenter(unet_input)
                 else:
                     train_logits = train_logits_for_logging
-                train_pred = (torch.sigmoid(train_logits) > 0.5).float()
+
+                if self._is_multiclass:
+                    train_pred = torch.argmax(train_logits, dim=1, keepdim=True).float()
+                    scale = float(max(1, self._num_seg_classes - 1))
+                    train_pred = train_pred / scale
+                    y_for_logging = y.float() / scale
+                else:
+                    train_pred = (torch.sigmoid(train_logits) > 0.5).float()
+                    y_for_logging = y
+
             self._log_segmenter_train_images(
                 raw_input=x,
                 train_input=unet_input,
-                y=y,
+                y=y_for_logging,
                 train_pred=train_pred,
                 batch_idx=batch_idx,
             )
@@ -940,8 +1118,8 @@ class MRISegmenterLightning(pl.LightningModule):
 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         x = self._to_plain_tensor(batch["image"])
-        y = (self._to_plain_tensor(batch["label"]) > 0).float()
-        if bool(self.cfg.model.segmenter.channels_last_3d):
+        y = self._prepare_segmentation_target(batch["label"])
+        if bool(self.cfg.model.segmenter.channels_last_3d) and not self._is_multiclass:
             y = y.to(memory_format=torch.channels_last_3d)
 
         val_input, _ = self._maybe_apply_generator(
@@ -955,8 +1133,25 @@ class MRISegmenterLightning(pl.LightningModule):
         # Keep validation eager to avoid retaining compiled graph outputs for metric state.
         logits = self.segmenter(val_input)
         val_loss = self.loss_fn(logits, y)
-        val_pred = (torch.sigmoid(logits) > 0.5).float()
-        self.dice_metric(y_pred=val_pred, y=y)
+        if self._is_multiclass:
+            val_pred_idx = torch.argmax(logits, dim=1, keepdim=True).long()
+            val_pred = F.one_hot(
+                val_pred_idx[:, 0],
+                num_classes=self._num_seg_classes,
+            ).permute(0, 4, 1, 2, 3).float()
+            y_onehot = F.one_hot(
+                y[:, 0].long(),
+                num_classes=self._num_seg_classes,
+            ).permute(0, 4, 1, 2, 3).float()
+            self.dice_metric(y_pred=val_pred, y=y_onehot)
+
+            scale = float(max(1, self._num_seg_classes - 1))
+            val_pred_for_logging = val_pred_idx.float() / scale
+            y_for_logging = y.float() / scale
+        else:
+            val_pred_for_logging = (torch.sigmoid(logits) > 0.5).float()
+            y_for_logging = y
+            self.dice_metric(y_pred=val_pred_for_logging, y=y)
 
         if (
             self.trainer.is_global_zero
@@ -966,7 +1161,12 @@ class MRISegmenterLightning(pl.LightningModule):
             and int(self.cfg.training.segmenter.val_image_log_every) > 0
             and ((int(self.current_epoch) + 1) % int(self.cfg.training.segmenter.val_image_log_every) == 0)
         ):
-            self._log_segmenter_val_images(val_input=val_input, y=y, val_pred=val_pred, batch_idx=batch_idx)
+            self._log_segmenter_val_images(
+                val_input=val_input,
+                y=y_for_logging,
+                val_pred=val_pred_for_logging,
+                batch_idx=batch_idx,
+            )
 
         self.log("val/loss", val_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         return val_loss
@@ -1007,6 +1207,20 @@ class MRISegmenterLightning(pl.LightningModule):
             )
 
     def on_validation_epoch_end(self) -> None:
-        mean_val_dice = float(self.dice_metric.aggregate().item())
+        aggregated = self.dice_metric.aggregate()
+        if self._is_multiclass:
+            per_class = aggregated
+            if per_class.ndim > 1:
+                per_class = per_class.mean(dim=0)
+
+            class_names = ["ncr", "ed", "et"]
+            for idx, value in enumerate(per_class.tolist()):
+                class_name = class_names[idx] if idx < len(class_names) else f"class_{idx + 1}"
+                self.log(f"val/dice_{class_name}", float(value), on_epoch=True, prog_bar=False, sync_dist=True)
+
+            mean_val_dice = float(per_class.mean().item())
+        else:
+            mean_val_dice = float(aggregated.item())
+
         self.log("val/dice", mean_val_dice, on_epoch=True, prog_bar=True, sync_dist=True)
         self.dice_metric.reset()
