@@ -22,3 +22,13 @@ archive/
 **/8_results*/*
 **/2_nnUNet*/*
 **/1_BIDS*/*
+*.tsv
+*.png
+*.dcm
+*.raw
+*.mhd
+CLAUDE.md
+.claude/
+python_usage.html
+running_jobs.html
+storage_handling.html
