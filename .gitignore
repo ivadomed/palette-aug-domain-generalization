@@ -32,3 +32,8 @@ CLAUDE.md
 python_usage.html
 running_jobs.html
 storage_handling.html
+_archive/
+eval/
+toDelete/
+
+**/random_stuff/*
