@@ -2,8 +2,8 @@
 # Aggregate evaluation results from a YAML config file.
 #
 # Usage:
-#   bash 06_29_aggregate_from_config.sh <config.yaml>
-#   bash 06_29_aggregate_from_config.sh configs/duke_t1wce_uni_t1wce_01_results.yaml
+#   bash 06_02_aggregate_from_config.sh <config.yaml>
+#   bash 06_02_aggregate_from_config.sh configs/ispy2_t1wce_01_results.yaml
 #
 # The config specifies which runs to include, the metrics_dir, and the output
 # prefix. See configs/ for available configs and

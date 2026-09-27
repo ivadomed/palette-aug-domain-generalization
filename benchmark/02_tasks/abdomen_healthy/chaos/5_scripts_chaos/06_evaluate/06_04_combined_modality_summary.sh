@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-training-modality aggregation (flair + t1w pooled) with an inline
+# Cross-training-modality aggregation (T1in + T2spir pooled) with an inline
 # significance column vs the reference method — companion to 06_10 (which
 # aggregates ONE training modality at a time). Same YAML-config pattern, but
 # consumed by the shared benchmark/00_commun_scripts/00_03_evaluate/
@@ -7,8 +7,8 @@
 # script's module docstring for the full config format and statistical model.
 #
 # Usage:
-#   bash 06_17_combined_modality_summary.sh <config.yaml>
-#   bash 06_17_combined_modality_summary.sh configs/open-ms_combined_01_results.yaml
+#   bash 06_04_combined_modality_summary.sh <config.yaml>
+#   bash 06_04_combined_modality_summary.sh configs/chaos_combined_01_results.yaml
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${HERE}/../00_utils/env.sh"

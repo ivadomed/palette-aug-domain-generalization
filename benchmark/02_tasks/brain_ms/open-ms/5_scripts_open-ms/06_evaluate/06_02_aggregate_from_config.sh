@@ -2,16 +2,12 @@
 # Aggregate evaluation results from a YAML config file.
 #
 # Usage:
-#   bash 06_10_aggregate_from_config.sh <config.yaml>
-#   bash 06_10_aggregate_from_config.sh configs/brats_t1n_01_results.yaml
+#   bash 06_02_aggregate_from_config.sh <config.yaml>
+#   bash 06_02_aggregate_from_config.sh configs/open-ms_flair_01_results.yaml
 #
 # The config specifies which runs to include, the metrics_dir, and the output
 # prefix. See configs/ for available configs and benchmark/00_commun_scripts/00_03_evaluate/aggregate_from_config.py
 # for the full config format.
-#
-# To run all configs in one shot:
-#   for cfg in configs/brats_*.yaml; do bash 06_10_aggregate_from_config.sh "$cfg"; done
-
 set -euo pipefail
 source "$(dirname "$0")/../00_utils/env.sh"
 cd "${PROJECT_ROOT}"
@@ -24,6 +20,7 @@ if [ $# -ne 1 ]; then
 fi
 
 CONFIG="$1"
+# Resolve relative paths against the script directory
 if [[ "$CONFIG" != /* ]]; then
     CONFIG="${HERE}/${CONFIG}"
 fi
