@@ -29,7 +29,7 @@ RUNGS = [
     ("+label_remap", "+ label remap",
      "ablations/on-harmony_T2w_baseline_kmeans_label_remap_20260804_195921"),
     ("+voronoi (noise fill)", "+ Voronoi sub-parcellation, noise fill",
-     "ablations/on-harmony_T2w_baseline_kmeans_label_remap_voronoi_20260804_195921"),
+     "ablations/on-harmony_T2w_baseline_kmeans_label_remap_voronoi_lblvor_20261007_171357"),  # label_voronoi noise fill 2026-10-09; was ..._voronoi_20260804_195921
     ("v26_6_2 (real fill)", "same partition, real-intensity fill (PALETTE alone)",
      "ablations/on-harmony_T2w_v26_6_2_train050_val000_20261005_222513"),   # val000 (real-image checkpoint selection, like rung 4) 2026-10-07; was ..._val100_20260625_154418 (flat)
     ("+AugLab (val000)", "+ full AugLab recipe on top",

@@ -46,6 +46,9 @@ audit() {   # audit <old rung-4 metrics dir or glob> <new run metrics dir> <labe
 }
 inline_eval() { ( export RUN_JOB_INLINE=1; "$@" ) 2>&1 | tail -5 | tee -a "${ST}"; [ "${PIPESTATUS[0]}" = 0 ] || fail "eval: $*"; }
 predict() {   # log named after the dataset + wrapper (several predicts per run)
+  # R45_SKIP_PREDICT=1: predictions were made elsewhere (on-harmony 4.5: TamIA, tamia_predict_onharmony.sh) and rsynced into
+  # this run dir -- evaluate + audit only (the evaluator still refuses missing / off-grid predictions)
+  [ "${R45_SKIP_PREDICT:-0}" = 1 ] && { log "predict SKIPPED (R45_SKIP_PREDICT=1): $*"; return 0; }
   local w; w="$(printf '%s\n' "$@" | grep -m1 '\.sh$')"; local tag; tag="$(basename "$(dirname "$(dirname "$w")")")_$(basename "$w" .sh)"
   "$@" > "${OUTD}/${RID}.predict_${tag}.log" 2>&1 || fail "predict: $*"; }
 
