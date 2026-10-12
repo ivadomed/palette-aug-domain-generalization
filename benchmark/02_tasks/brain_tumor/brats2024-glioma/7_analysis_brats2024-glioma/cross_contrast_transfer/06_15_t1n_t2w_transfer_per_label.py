@@ -47,11 +47,11 @@ LABELS = ["NCR", "SNFH", "ET", "RC"]
 DIRECTIONS = [
     ("T1n -> T2w (transfers well)",
      METRICS_ROOT / "t1n/ablations/auglab_brats2024-glioma_t1n_v26_6_2_train050_val000_20261005_222227",
-     METRICS_ROOT / "t1n/ablations/auglab_brats2024-glioma_t1n_baseline_kmeans_label_remap_voronoi_20260730_200711",
+     METRICS_ROOT / "t1n/ablations/auglab_brats2024-glioma_t1n_baseline_kmeans_label_remap_voronoi_lblvor_20261007_170548",
      "t2w"),
     ("T2w -> T1n (fails)",
      METRICS_ROOT / "t2w/ablations/auglab_brats2024-glioma_t2w_v26_6_2_train050_val000_20261005_222300",
-     METRICS_ROOT / "t2w/ablations/auglab_brats2024-glioma_t2w_baseline_kmeans_label_remap_voronoi_20260805_020659",
+     METRICS_ROOT / "t2w/ablations/auglab_brats2024-glioma_t2w_baseline_kmeans_label_remap_voronoi_lblvor_20261007_170621",
      "t1n"),
 ]
 

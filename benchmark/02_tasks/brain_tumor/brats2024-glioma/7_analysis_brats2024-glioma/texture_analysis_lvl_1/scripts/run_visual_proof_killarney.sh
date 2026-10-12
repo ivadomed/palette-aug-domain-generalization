@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Killarney (per-GPU allocation, L40S) launcher for the full-BraTS visual-proof analyses: ONE single-GPU job per (analysis, cell).
+# Data mirrors Vulcan's repo-relative paths (staged by rsync 2026-10-11), so no VP_* root overrides are needed; the venv shims there
+# are current (benchmark/02_tasks paths), PYTHONPATH gets the dataset 5_scripts dirs anyway. Tier b1 (<= 3 h).
+# Sizing (Paul, 2026-10-11): short jobs that backfill -- 30 min, 1 GPU, 4 CPUs, 24G -- so each cell is split into case chunks
+# (--case-slice i:j); both scripts are resumable per case (existing outputs are skipped), so a timed-out chunk is simply resubmitted.
+#   bash run_visual_proof_killarney.sh v2 bratsfull_t2w_t1n 0:24    # full-BraTS v2 (HiResCAM), cases 0-23 -> outputs/plots/visual_proof_v2_brats_full
+#   bash run_visual_proof_killarney.sh v3 bratsfull_t2w_t1n 0:35    # v3 activations, cases 0-34          -> outputs/plots/visual_proof_v3_activations
+#   bash run_visual_proof_killarney.sh v2cpu                     # CPU: re-render + stats for the full-BraTS v2 run
+#   bash run_visual_proof_killarney.sh v4 bratsfull_t2w_t1n 0:12    # v4 blur integrated gradients -> outputs/plots/visual_proof_blurig ; v4rep = CPU report
+#   ERF_CASES=BraTSGLI02169102 bash run_visual_proof_killarney.sh v7 bratsfull_t1n_t2f   # v7 per-voxel input gradients -> outputs/plots/visual_proof_erf ; v7rep = CPU report
+#   bash run_visual_proof_killarney.sh v3cpu                     # CPU: plots/stats for v3
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../../.."
+source benchmark/02_tasks/brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma/00_utils/env.sh
+export RUN_JOB_GPU_TYPE="${RUN_JOB_GPU_TYPE:-l40s}" RUN_JOB_CPUS_PER_GPU=4 RUN_JOB_MEM_PER_GPU=24G
+MODE="${1:?v7|v7rep|v2|v3|v3b|v3c|v4|v5|v6|v2cpu|v3cpu|v3bcpu|v3ccpu <cell>|v3crep|v4rep|v5rep|v6rep}"; CELL="${2:-}"; SLICE="${3:-}"; TAG="${SLICE//:/-}"
+A="benchmark/02_tasks/brain_tumor/brats2024-glioma/7_analysis_brats2024-glioma/texture_analysis_lvl_1"; T="benchmark/02_tasks"
+LOGS_DIR="${SCRATCH}/visual_proof_killarney"; mkdir -p "${LOGS_DIR}"
+ENVS="export NNUNET_PROJECT_ROOT='${PROJECT_ROOT}'; export nnUNet_compile=false;
+      export PYTHONPATH='${PROJECT_ROOT}/${T}/brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma:${PROJECT_ROOT}/${T}/brain_ms/open-ms/5_scripts_open-ms:${PROJECT_ROOT}/${T}/pelvis_healthy/totalseg-pelvic/5_scripts_totalseg-pelvic:${PYTHONPATH:-}';
+      export VP_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v2_brats_full'; export VP3_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3_activations'; cd '${PROJECT_ROOT}'"
+case "${MODE}" in
+  v7)    run_job --name "vp7_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v7_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP7_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_erf'; .venv/bin/python ${A}/scripts/visual_proof_erf.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}} ${ERF_CASES:+--cases ${ERF_CASES}}" ;;
+  v7rep) run_job --name vp7_report --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v7_report.log" -- bash -c "${ENVS}; export VP7_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_erf'; .venv/bin/python ${A}/scripts/visual_proof_erf.py --report" ;;
+  v6)    run_job --name "vp6_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v6_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP6_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_strip2'; .venv/bin/python ${A}/scripts/visual_proof_strip2.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v6rep) run_job --name vp6_report --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v6_report.log" -- bash -c "${ENVS}; export VP6_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_strip2'; .venv/bin/python ${A}/scripts/visual_proof_strip2.py --report" ;;
+  v5)    run_job --name "vp5_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v5_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP5_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_strip'; .venv/bin/python ${A}/scripts/visual_proof_strip.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v5rep) run_job --name vp5_report --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v5_report.log" -- bash -c "${ENVS}; export VP5_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_strip'; .venv/bin/python ${A}/scripts/visual_proof_strip.py --report" ;;
+  v4)    run_job --name "vp4_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v4_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP4_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_blurig'; .venv/bin/python ${A}/scripts/visual_proof_blurig.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v4rep) run_job --name vp4_report --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v4_report.log" -- bash -c "${ENVS}; export VP4_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_blurig'; .venv/bin/python ${A}/scripts/visual_proof_blurig.py --report" ;;
+  v2)    run_job --name "vp2full_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v2_${CELL}_${TAG}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/visual_proof_v2.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v3)    run_job --name "vp3_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v3_${CELL}_${TAG}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/visual_proof_v3_activations.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v2cpu) run_job --name vp2full_cpu --gpus 0 --cpus 4 --mem 32G --time 00:45:00 --log "${LOGS_DIR}/v2_cpu.log" -- bash -c "${ENVS}; for c in bratsfull_t2w_t1n bratsfull_t2w_t2f bratsfull_t1n_t2f bratsfull_t1n_t2w; do .venv/bin/python ${A}/scripts/visual_proof_v2.py --rerender --cells \$c > ${LOGS_DIR}/v2_rerender_\$c.log 2>&1 & done; wait; .venv/bin/python ${A}/scripts/visual_proof_v2.py --stats-only" ;;
+  v3b)   run_job --name "vp3b_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v3b_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP3B_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3b_realmaps'; .venv/bin/python ${A}/scripts/visual_proof_v3b_realmaps.py --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v3bcpu) run_job --name vp3b_cpu --gpus 0 --cpus 2 --mem 24G --time 00:30:00 --log "${LOGS_DIR}/v3b_cpu.log" -- bash -c "${ENVS}; export VP3B_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3b_realmaps'; .venv/bin/python ${A}/scripts/visual_proof_v3b_realmaps.py --plots" ;;
+  v3c)   run_job --name "vp3c_${CELL}_${TAG}" --gpus 1 --time 00:30:00 --log "${LOGS_DIR}/v3c_${CELL}_${TAG}.log" -- bash -c "${ENVS}; export VP3B_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3b_realmaps' VP3C_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3c_profiles'; .venv/bin/python ${A}/scripts/visual_proof_v3c_profiles.py --gpu --cells ${CELL} ${SLICE:+--case-slice ${SLICE}}" ;;
+  v3ccpu) run_job --name "vp3c_cpu_${CELL}" --gpus 0 --cpus 4 --mem 32G --time 00:40:00 --log "${LOGS_DIR}/v3c_cpu_${CELL}.log" -- bash -c "${ENVS}; export VP3B_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3b_realmaps' VP3C_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3c_profiles'; .venv/bin/python ${A}/scripts/visual_proof_v3c_profiles.py --analyze --cells ${CELL}" ;;
+  v3crep) run_job --name vp3c_report --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v3c_report.log" -- bash -c "${ENVS}; export VP3B_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3b_realmaps' VP3C_OUT='${PROJECT_ROOT}/${A}/outputs/plots/visual_proof_v3c_profiles'; .venv/bin/python ${A}/scripts/visual_proof_v3c_profiles.py --report" ;;
+  v3cpu) run_job --name vp3_cpu --gpus 0 --cpus 2 --mem 16G --time 00:20:00 --log "${LOGS_DIR}/v3_cpu.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/visual_proof_v3_activations.py --plots" ;;
+  *) echo "unknown mode ${MODE}" >&2; exit 1 ;;
+esac
