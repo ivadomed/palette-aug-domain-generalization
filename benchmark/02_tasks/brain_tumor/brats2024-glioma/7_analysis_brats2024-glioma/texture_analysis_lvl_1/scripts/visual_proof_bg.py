@@ -34,9 +34,23 @@ def lse(x, axis=0):
     m = x.max(axis); return m + np.log(np.exp(x - m).sum(axis))
 
 
-def run_bg(key, dev, sl=None):
+def transform_img(img, body, cond):
+    """Counterfactual test images (section 30 of FINDINGS): flat = 4-level 1-D k-means of the body intensities, each voxel -> its bin mean;
+    inv = -x in the body; both re-z-scored over the body afterwards. Background (outside the body) untouched."""
+    x = img.copy(); v = x[body].astype(np.float64)
+    if "flat" in cond:
+        c = np.quantile(v, [0.125, 0.375, 0.625, 0.875])
+        for _ in range(30):
+            lab = np.abs(v[:, None] - c[None]).argmin(1); c = np.array([v[lab == k].mean() if (lab == k).any() else c[k] for k in range(len(c))])
+        v = c[np.abs(v[:, None] - c[None]).argmin(1)]
+    if "inv" in cond:
+        v = -v
+    x[body] = ((v - v.mean()) / (v.std() + 1e-6)).astype(x.dtype); return x
+
+
+def run_bg(key, dev, sl=None, cond="orig"):
     import torch
-    cell = vt.CELLS[key]; od = OUT / key; od.mkdir(exist_ok=True); T = cell["target"]
+    cell = vt.CELLS[key]; od = (OUT if cond == "orig" else vt.OUT / "bg_cond" / cond) / key; od.mkdir(parents=True, exist_ok=True); T = cell["target"]
     prs = {a: v2.load_predictor(f(), dev) for a, f in cell["models"].items()}; pr0 = prs["flat"]; ps = pr0.configuration_manager.patch_size
     for pr in prs.values():
         if hasattr(pr.network.decoder, "deep_supervision"):
@@ -51,6 +65,8 @@ def run_bg(key, dev, sl=None):
         if tg.sum() < 50:
             continue
         body = img != 0 if (img == 0).mean() > 0.05 else (img > np.percentile(img, 5))
+        if cond != "orig":
+            img = transform_img(img, body, cond)
         box = e7.patch_at(tg, ps, img.shape); ip, bp, gp = img[box].astype(np.float32), body[box], gt[box]
         padw = [(0, max(0, int(p_) - s_)) for p_, s_ in zip(ps, ip.shape)]
         if any(w for _, w in padw):
@@ -93,9 +109,9 @@ def run_bg(key, dev, sl=None):
                f"{stats['fp_flat']:.4f}/{stats['fp_real']:.4f}; {time.time() - t0:.0f} s")
 
 
-def load(cell):
+def load(cell, base=None):
     rows = []
-    for f in sorted((OUT / cell).glob("*.npz")):
+    for f in sorted(((base or OUT) / cell).glob("*.npz")):
         z = np.load(f); d = pd.DataFrame({k: z[k].astype(np.float32) for k in ("s", "img", "lm", "te", "ed", "het", "lc", "dcore", "L_flat", "L_real") if k in z}); d["kind"] = z["kind"]
         for k in ("mu_lm", "sd_lm", "mu_lte", "sd_lte", "fp_flat", "fp_real", "dice_flat", "dice_real"):
             d[k] = float(z[k])
@@ -640,9 +656,66 @@ def report_context(cells=("glioma_t2w_t1n", "glioma_t2w_t2f", "glioma_t1n_t2f", 
     fig.supylabel("share called edema", fontsize=8.5); fig.tight_layout(); fig.savefig(OUT / "bg_context.png", dpi=170); plt.close(fig)
 
 
+def report_cond(cells=("glioma_t1n_t2f", "glioma_t2w_t2f", "glioma_t1n_t2w", "glioma_t2w_t1n"), conds=("orig", "inv", "flat", "invflat")):
+    """Crossed counterfactual (FINDINGS section 30, pre-registered): per case edema hit (L > 0, depth >= 1), background FP (s < -3), patch Dice,
+    flat vs real, for the original test image and its inverted / flattened / inverted+flattened versions. Interaction = change of flat minus change
+    of real vs the original (Wilcoxon over cases)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import wilcoxon
+    pw = lambda x: wilcoxon(x).pvalue if len(x) >= 5 and np.any(np.asarray(x) != 0) else np.nan   # noqa: E731
+    title = lambda c: f"{vt.CELLS[c]['task']}: " + c.split("_", 1)[1].replace("_", " -> ", 1).replace("_", " ")   # noqa: E731
+    L = ["# Crossed counterfactual: inverted / flattened test images (pre-registered predictions in FINDINGS section 30)", "",
+         "Per case; mean over cases (median in brackets for hit). d = change vs original; interaction = d flat - d real, Wilcoxon over cases.", "",
+         "| cell | condition | n | edema hit flat | real | Dice flat | real | bg FP flat | real | d hit flat | p | d hit real | p | interaction | p |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    res = {}
+    for c in cells:
+        per = {}
+        for k in conds:
+            base = OUT if k == "orig" else vt.OUT / "bg_cond" / k; rows = []
+            for f in sorted((base / c).glob("*.npz")):
+                z = np.load(f); m = (z["kind"] == 1) & (z["s"].astype(np.float32) >= 1)
+                if m.sum() < 50:
+                    continue
+                rows.append(dict(case=f.stem, **{f"hit_{a}": float((z[f"L_{a}"][m].astype(np.float32) > 0).mean()) for a in ARMS},
+                                 **{f"fp_{a}": float(z[f"fp_{a}"]) for a in ARMS}, **{f"dice_{a}": float(z[f"dice_{a}"]) for a in ARMS}))
+            if rows:
+                per[k] = pd.DataFrame(rows).set_index("case")
+        if "orig" not in per:
+            continue
+        res[c] = per; o = per["orig"]
+        for k, P in per.items():
+            cs = P.index.intersection(o.index); P = P.loc[cs]; oo = o.loc[cs]
+            df_, dr_ = P.hit_flat - oo.hit_flat, P.hit_real - oo.hit_real
+            L.append(f"| {title(c)} | {k} | {len(cs)} | {P.hit_flat.mean():.3f} ({P.hit_flat.median():.2f}) | {P.hit_real.mean():.3f} ({P.hit_real.median():.2f}) | "
+                     f"{P.dice_flat.mean():.3f} | {P.dice_real.mean():.3f} | {P.fp_flat.mean():.4f} | {P.fp_real.mean():.4f} | "
+                     + ("| | | | | |" if k == "orig" else f"{df_.mean():+.3f} | {pw(df_):.1g} | {dr_.mean():+.3f} | {pw(dr_):.1g} | {(df_ - dr_).mean():+.3f} | {pw(df_ - dr_):.1g} |"))
+    (OUT / "bg_cond.md").write_text("\n".join(L) + "\n"); print("\n".join(L))
+    if not res:
+        return
+    fig, axs = plt.subplots(2, len(res), figsize=(3.6 * len(res), 5.6), squeeze=False)
+    for j, (c, per) in enumerate(res.items()):
+        ks = [k for k in conds if k in per]
+        for r, (met, lab) in enumerate((("hit", "edema voxels called edema"), ("dice", "patch Dice (edema)"))):
+            ax = axs[r, j]
+            for a, col, off in (("flat", "C0", -0.12), ("real", "C3", 0.12)):
+                m = [per[k][f"{met}_{a}"].mean() for k in ks]; se = [per[k][f"{met}_{a}"].std() / np.sqrt(len(per[k])) for k in ks]
+                ax.errorbar(np.arange(len(ks)) + off, m, yerr=se, fmt="o-", color=col, ms=4, lw=1.2, capsize=2, label=f"{a}-fill")
+            ax.set_xticks(range(len(ks))); ax.set_xticklabels(["original", "inverted", "flattened", "inv + flat"][:len(ks)], fontsize=7); ax.set_ylim(0, 1)
+            ax.set_ylabel(lab, fontsize=7); ax.tick_params(labelsize=7); ax.legend(fontsize=6)
+            if r == 0:
+                ax.set_title(title(c), fontsize=8)
+    fig.suptitle("Same test cases, test image inverted (-x) and/or flattened (4-level k-means, texture removed) after preprocessing; mean over cases +- SE", fontsize=8)
+    fig.tight_layout(rect=[0, 0, 1, 0.96]); fig.savefig(OUT / "bg_cond.png", dpi=170); plt.close(fig)
+
+
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--cells", default=",".join(CELLS)); ap.add_argument("--case-slice", default=None); ap.add_argument("--report", action="store_true"); ap.add_argument("--target", action="store_true"); ap.add_argument("--classes", action="store_true"); ap.add_argument("--drivers", action="store_true"); ap.add_argument("--examples", default=None); ap.add_argument("--examples-report", action="store_true"); ap.add_argument("--cases", action="store_true"); ap.add_argument("--context", action="store_true")
+    ap = argparse.ArgumentParser(); ap.add_argument("--cells", default=",".join(CELLS)); ap.add_argument("--case-slice", default=None); ap.add_argument("--report", action="store_true"); ap.add_argument("--target", action="store_true"); ap.add_argument("--classes", action="store_true"); ap.add_argument("--drivers", action="store_true"); ap.add_argument("--examples", default=None); ap.add_argument("--examples-report", action="store_true"); ap.add_argument("--cases", action="store_true"); ap.add_argument("--context", action="store_true"); ap.add_argument("--cond", default="orig"); ap.add_argument("--cond-report", action="store_true")
     a = ap.parse_args()
+    if a.cond_report:
+        report_cond(); return
     if a.context:
         report_context(); return
     if a.cases:
@@ -662,7 +735,7 @@ def main():
         report(); return
     import torch
     for c in a.cells.split(","):
-        run_bg(c, torch.device("cuda"), a.case_slice)
+        run_bg(c, torch.device("cuda"), a.case_slice, a.cond)
 
 
 if __name__ == "__main__":
