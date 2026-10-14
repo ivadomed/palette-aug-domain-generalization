@@ -1035,7 +1035,9 @@ def _write_per_contrast_png(ablations_root, contrast_label, task_name, rungs, se
 def _labelled_case_values(metrics_root, ood_contrasts, extra_ood_sources, run_key, metric):
     """{OOD label: {"<ns>|<case>": value}} for ONE rung -- own ood_contrasts (label =
     contrast) and every extra source's items (label = "<dataset>/<item>"). Values are
-    raw (dice in [0,1])."""
+    raw (dice in [0,1]). A dict source may carry "items": [...] (opt-in, 2026-10-14) to keep
+    only those items of its eval_all.csv -- for a cohort that also scores contrasts that are
+    in-domain for this ladder (lld-mmri-hcc's CE phases for the CE-T1w-trained liver model)."""
     out = {}
     own_ns = _dataset_name(metrics_root)
     rd = resolve_run_dir(metrics_root, run_key)
@@ -1050,7 +1052,10 @@ def _labelled_case_values(metrics_root, ood_contrasts, extra_ood_sources, run_ke
         rd = resolve_run_dir(root, _src_key(src, run_key))
         if not rd.is_dir():
             continue
+        keep = src.get("items") if isinstance(src, dict) else None
         for item, cases in load_case_means(rd, metric).items():
+            if keep and item not in keep:
+                continue
             if cases:
                 out[f"{ds}/{item}"] = {f"{ds}|{k}": v for k, v in cases.items()}
     return out
@@ -1186,7 +1191,8 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
             "run_keys": [r[2] for r in rungs], "dice": series["dice"], "hd95": series["hd95"],
             "ood_contrasts": ood_contrasts,
             "extra_ood_sources": [{"metrics_root": str(_src_root(src)),
-                                   "run_subdir": (src.get("run_subdir") if isinstance(src, dict) else None)}
+                                   "run_subdir": (src.get("run_subdir") if isinstance(src, dict) else None),
+                                   **({"items": list(src["items"])} if isinstance(src, dict) and src.get("items") else {})}
                                   for src in extra_ood_sources],
             "ood_groups": groups, "group_sizes": n_info,
             "per_contrast": per_group, "fill_swap_significance": sig, "rung_step_significance": steps}

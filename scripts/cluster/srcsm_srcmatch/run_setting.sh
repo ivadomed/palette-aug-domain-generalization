@@ -11,7 +11,7 @@
 # The plain SRCSM metrics are never touched. Status: $SCRATCH/srcsm_match/_status/<key>.status
 #   bash scripts/cluster/srcsm_srcmatch/run_setting.sh <key>
 #   keys: ms_flair ms_t1w glioma_t1n glioma_t2w glioma_t1c glioma_t2f abdomen_t1in abdomen_t2spir brain_t1w brain_t2w brain_dwi
-#         breast_t1wce breast_t2w mandible pelvis_ct pelvis_mri pancreas_t1wce pancreas_t2w
+#         breast_t1wce breast_t2w mandible pelvis_ct pelvis_mri pancreas_t1wce pancreas_t2w liver
 set -uo pipefail
 cd /project/aip-jcohen/paulh/mri_synthesis_project
 KEY="${1:?usage: run_setting.sh <key>}"
@@ -211,6 +211,25 @@ pancreas_t1wce|pancreas_t2w)
       if [ -d "${CM}/${item}/auglab_${RID}" ]; then audit "${CM}/${item}/auglab_${RID}" "${CM}/${item}/auglab_${RID}_srcmatch" "${comp}_${TC}_${item}"
       else log "note: ${comp}/${item}: no plain SRCSM metrics yet to audit against (matched run evaluated anyway)"; fi
     done
+  done
+  ;;
+# ── Liver tumour (atlas-liver-hcc own CE-T1w test + lld-mmri-hcc 8 items + liverhccseg 4 CE phases; 2026-10-14) ──
+liver)
+  L="${T}/liver_hcc"; TC=t1w; RID=atlas-liver-hcc_t1w_srcsm_20260804_062605
+  R="${L}/atlas-liver-hcc/2_nnUNet_atlas-liver-hcc/raw/Dataset080_AtlasLiverHCC"   # 48 train in imagesTr, 12 test in imagesTs_t1w
+  LR="${L}/lld-mmri-hcc/2_nnUNet_lld-mmri-hcc/raw"; HR="${L}/liverhccseg/2_nnUNet_liverhccseg/raw"
+  specs=("${R}/imagesTs_t1w:mr")
+  for it in ce-pre ce-art ce-pv ce-del t2wi dwi inphase outphase; do specs+=("${LR}/imagesTs_${it}:mr"); done
+  for it in ce-pre_T1w ce-art_T1w ce-pv_T1w ce-del_T1w; do specs+=("${HR}/imagesTs_${it}:mr"); done
+  match liver_t1w t1w "${R}/imagesTr" mr "${specs[@]}" || exit 1
+  predict bash "${L}/atlas-liver-hcc/5_scripts_atlas-liver-hcc/05_predict/05_06_predict_srcsm.sh" "${RID}" all
+  predict bash "${L}/lld-mmri-hcc/5_scripts_lld-mmri-hcc/05_predict/05_06_predict_atlas_srcsm.sh" "${RID}" all
+  predict bash "${L}/liverhccseg/5_scripts_liverhccseg/05_predict/05_06_predict_atlas_srcsm.sh" "${RID}" all
+  ev "bash ${L}/atlas-liver-hcc/5_scripts_atlas-liver-hcc/06_evaluate/06_01_evaluate_run.sh ${RID} auglab"
+  for ds in lld-mmri-hcc liverhccseg; do ev "export CATEGORY=auglab; bash ${L}/${ds}/5_scripts_${ds}/06_evaluate/06_01_evaluate_run.sh ${RID} all"; done
+  for ds in atlas-liver-hcc lld-mmri-hcc liverhccseg; do
+    LM="${L}/${ds}/8_results_${ds}/02_metrics/atlas_liver_hcc_model/t1w"
+    audit "${LM}/auglab_${RID}" "${LM}/auglab_${RID}_srcmatch" "liver_${ds}"
   done
   ;;
 *) log "FAILED: no recipe for ${KEY}"; exit 3 ;;
