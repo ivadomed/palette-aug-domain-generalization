@@ -28,6 +28,7 @@ import visual_proof_erf_tasks as vt  # noqa: E402
 import visual_proof_erf_outcome as vo  # noqa: E402
 e7, v2 = vt.e7, vt.v2; FOLDS = (0, 1, 2)
 ARMS = ("noise", "flat", "real"); PAL = {"noise": "#2ca02c", "flat": "#1f77b4", "real": "#d62728"}
+RAND = os.environ.get("PG_RAND", "0") == "1"   # add a 4th arm "rand": same architecture, 3 random initialisations (grain floor), gradients at the real arm's predicted class
 ALL_PATHS = os.environ.get("PG_ALL", "0") == "1"   # 1: one gradient per skip (p0 ... p{n-1}), Paul's request 2026-10-13 (texture = label attribution = deeper skips); 0: p0, p1, rest
 SEEDS_IN = vo.OUT; OUT = Path(os.environ.get("VP_PATHGRAD_OUT") or (vt.OUT.parent / ("pathgrad_all" if ALL_PATHS else "pathgrad"))); OUT.mkdir(parents=True, exist_ok=True)
 MAX_SEEDS = int(os.environ.get("PG_MAX_SEEDS", 24)); MAX_CASES = vo.MAX_CASES; BATCH = 2
@@ -56,8 +57,19 @@ def path_grads(net, x, seeds, cls, dev, keep=None):
     return out
 
 
-def fine_share(G, body):
-    hp = G - ndi.gaussian_filter(G, 1.0); return float((hp[body] ** 2).sum() / ((G[body] ** 2).sum() + 1e-30))
+NB = 16   # radial power-spectrum bins over 0 .. 0.5 cycles / voxel (the "Fourier sensitivity" profile of Krishnamachari et al. 2022; LITERATURE_GRAIN.md)
+
+
+def radial_spectrum(G, body, nb=NB):
+    """Radially averaged power spectrum of the gradient map (body-masked), normalised to unit total power within 0 .. 0.5 cyc/vox, and its spectral centroid (cyc/vox)."""
+    F = np.abs(np.fft.fftn(G * body)) ** 2
+    fr = [np.fft.fftfreq(n) for n in G.shape]; r = np.sqrt(sum(f.reshape([-1 if i == j else 1 for j in range(3)]) ** 2 for i, f in enumerate(fr)))
+    b = np.minimum((r / 0.5 * nb).astype(int), nb); keep = b < nb; p = np.bincount(b[keep], weights=F[keep], minlength=nb)[:nb]; tot = p.sum() + 1e-30
+    cent = float((r[keep] * F[keep]).sum() / tot); return p / tot, cent
+
+
+def fine_share(G, body, s=1.0):
+    hp = G - ndi.gaussian_filter(G, s); return float((hp[body] ** 2).sum() / ((G[body] ** 2).sum() + 1e-30))
 
 
 def pick_seeds(d):
@@ -101,14 +113,23 @@ def run_cell(key, dev, sl=None):
         if any(w for _, w in padw):
             ip, bp, gp = np.pad(ip, padw), np.pad(bp, padw), np.pad(gp, padw)
         V = [(int(r.z), int(r.y), int(r.x)) for r in d.itertuples()]
-        G = {}; add_err = []
-        for a, pr in prs.items():
-            net = pr.network; cls = [int(getattr(r, f"{a}_pred")) for r in d.itertuples()]
+        G = {}; add_err = []; PF = {}
+        arms_run = list(prs.items()) + ([("rand", prs["real"])] if RAND else [])   # rand: same plan / architecture, 3 random initialisations (architectural floor of the grain)
+        for a, pr in arms_run:
+            net = pr.network; cls = [int(getattr(r, f"{'real' if a == 'rand' else a}_pred")) for r in d.itertuples()]
             targets = [("full", None)] + ([(f"p{j}", {j}) for j in range(n_paths)] if ALL_PATHS else [("p0", {0}), ("p1", {1})]); acc = {k: None for k, _ in targets}
             for k in FOLDS:
-                net.load_state_dict(pr.list_of_parameters[k]); net.eval()
+                if a == "rand":
+                    torch.manual_seed(1000 + k)
+                    for m_ in net.modules():
+                        if hasattr(m_, "reset_parameters"):
+                            m_.reset_parameters()
+                    net.eval()
+                else:
+                    net.load_state_dict(pr.list_of_parameters[k]); net.eval()
                 for nm, keep in targets:
                     g = path_grads(net, ip, V, cls, dev, keep); acc[nm] = g if acc[nm] is None else [x_ + y_ for x_, y_ in zip(acc[nm], g)]
+                    PF.setdefault((a, nm), []).append([fine_share(x_.cpu().numpy(), bp) for x_ in g])   # per-fold grain (sigma 1), before the fold-mean
                 if k == FOLDS[0]:   # additivity check on the first seed: sum of all single-path gradients vs the full gradient
                     parts = [path_grads(net, ip, V[:1], cls[:1], dev, {j})[0] for j in range(n_paths)]; full = path_grads(net, ip, V[:1], cls[:1], dev, None)[0]
                     add_err.append(float((sum(parts) - full).abs().max() / (full.abs().max() + 1e-30)))
@@ -124,14 +145,23 @@ def run_cell(key, dev, sl=None):
         for i, r in enumerate(d.itertuples()):
             v = V[i]; ball = (np.sqrt((zz - v[0]) ** 2 + (yy - v[1]) ** 2 + (xx - v[2]) ** 2) <= r_loc) & bp
             row = dict(cell=key, task=cell["task"], case=case, seed=int(r.seed), region=r.region, pattern=r.pattern, band=int(r.band), depth=float(r.depth), cls=int(r.cls))
-            for a in ARMS:
-                Gf = G[a, "full"][i]; den = float((Gf[bp] ** 2).sum()) + 1e-30; row[f"{a}_margin"] = float(getattr(r, f"{a}_margin")); row[f"{a}_pred"] = int(getattr(r, f"{a}_pred"))
+            for a in ARMS + (("rand",) if RAND else ()):
+                a0 = "real" if a == "rand" else a
+                Gf = G[a, "full"][i]; den = float((Gf[bp] ** 2).sum()) + 1e-30; row[f"{a}_margin"] = float(getattr(r, f"{a0}_margin")); row[f"{a}_pred"] = int(getattr(r, f"{a0}_pred"))
                 for nm in PN:
                     Gk = G[a, nm][i]; row[f"{a}_share_{nm}"] = float((Gk[bp] * Gf[bp]).sum() / den); row[f"{a}_e_{nm}"] = float((Gk[bp] ** 2).sum() / den)
-                    row[f"{a}_local_{nm}"] = float(np.abs(Gk)[ball].sum() / (np.abs(Gk)[bp].sum() + 1e-30)); row[f"{a}_fine_{nm}"] = fine_share(Gk, bp)
-                row[f"{a}_fine"] = fine_share(Gf, bp); row[f"{a}_local"] = float(np.abs(Gf)[ball].sum() / (np.abs(Gf)[bp].sum() + 1e-30))
+                    row[f"{a}_local_{nm}"] = float(np.abs(Gk)[ball].sum() / (np.abs(Gk)[bp].sum() + 1e-30)); row[f"{a}_fine_{nm}"] = fine_share(Gk, bp); row[f"{a}_fine2_{nm}"] = fine_share(Gk, bp, 2.0); row[f"{a}_fine3_{nm}"] = fine_share(Gk, bp, 3.0)
+                    row[f"{a}_finef_{nm}"] = float(np.mean([pf[i] for pf in PF[(a, nm)]]))   # mean over folds of the per-fold grain
+                row[f"{a}_fine"] = fine_share(Gf, bp); row[f"{a}_fine2"] = fine_share(Gf, bp, 2.0); row[f"{a}_fine3"] = fine_share(Gf, bp, 3.0); row[f"{a}_local"] = float(np.abs(Gf)[ball].sum() / (np.abs(Gf)[bp].sum() + 1e-30))
+                row[f"{a}_finef"] = float(np.mean([pf[i] for pf in PF[(a, "full")]]))
+                for nm in ("full", "p2", "p3"):   # radial power spectrum + spectral centroid of the fold-mean map (full gradient and the two paths that carry the decision)
+                    if nm == "full" or nm in PN:
+                        ps_, ce_ = radial_spectrum(G[a, nm][i], bp); row[f"{a}_cent_{nm}"] = ce_
+                        for b_ in range(NB):
+                            row[f"{a}_rps_{nm}_{b_}"] = float(ps_[b_])
                 for nm in SV:
-                    sv[f"{a}_{nm}"].append(G[a, nm][i][v[0]])
+                    if f"{a}_{nm}" in sv:
+                        sv[f"{a}_{nm}"].append(G[a, nm][i][v[0]])
             sv["img"].append(ip[v[0]]); sv["gt"].append(gp[v[0]] == int(r.cls) if int(r.cls) else (gp[v[0]] > 0)); sv["z"].append(v[0]); sv["pattern"].append(r.pattern)
             rows.append(row)
         np.savez_compressed(od / f"{case}_pg.npz", seeds=np.array(V), pattern=np.array(sv.pop("pattern")), z=np.array(sv.pop("z")),
@@ -279,26 +309,70 @@ def report():
         rows = []
         for k in cells:
             d = St[St.cell == k]; pc = d.groupby("case").median(numeric_only=True); r = dict(cell=k, task=d.task.iloc[0], n=len(pc))
-            for m in ("local", "fine"):
+            for m in [m_ for m_ in ("local", "fine", "fine2", "fine3", "finef") if f"real_{m_}_{PNS[0]}" in pc.columns]:
                 for p in PNS:
-                    for a in ARMS:
+                    for a in ARMS + (("rand",) if f"rand_{m}_{p}" in pc.columns else ()):
                         r[f"{a}_{m}_{p}"] = pc[f"{a}_{m}_{p}"].median()
                     dd = pc[f"real_{m}_{p}"] - pc[f"flat_{m}_{p}"]; r[f"d_rf_{m}_{p}"] = dd.median(); r[f"p_rf_{m}_{p}"] = wp(dd)
                     dn = pc[f"real_{m}_{p}"] - pc[f"noise_{m}_{p}"]; r[f"d_rn_{m}_{p}"] = dn.median(); r[f"p_rn_{m}_{p}"] = wp(dn)
             rows.append(r)
         E = pd.DataFrame(rows); E.to_csv(OUT / "pathgrad_depth_localfine_cells.csv", index=False)
-        for m, title in (("local", "spread: fraction of |Gk| within r_loc of the voxel (1 = compact)"), ("fine", "grain: fine-detail share of Gk (energy above a sigma-1 Gaussian)")):
-            L += ["", f"## 5{'a' if m == 'local' else 'b'}. Per depth, {title}; noise / flat / real, then real - flat (p)", "",
+        MT = [("local", "spread: fraction of |Gk| within r_loc of the voxel (1 = compact)"), ("fine", "grain: fine-detail share of Gk (energy above a sigma-1 Gaussian)"), ("fine2", "grain at sigma 2 (energy above a sigma-2 Gaussian)"), ("fine3", "grain at sigma 3 (energy above a sigma-3 Gaussian)")]
+        MT = [(m, t) for m, t in MT if f"d_rf_{m}_{PNS[0]}" in E.columns]
+        for m, title in MT:
+            L += ["", f"## 5{'abcd'[[x for x, _ in MT].index(m)]}. Per depth, {title}; noise / flat / real, then real - flat (p)", "",
                   "| cell | n | " + " | ".join(PNS) + " | " + " | ".join(f"d {p}" for p in PNS) + " |", "|" + "---|" * (2 + 2 * len(PNS))]
             for r in E.itertuples():
                 L.append(f"| {r.cell} | {r.n} | " + " | ".join(f"{getattr(r, f'noise_{m}_{p}'):.2f}/{getattr(r, f'flat_{m}_{p}'):.2f}/{getattr(r, f'real_{m}_{p}'):.2f}" for p in PNS) + " | "
                          + " | ".join(f"{getattr(r, f'd_rf_{m}_{p}'):+.3f} ({getattr(r, f'p_rf_{m}_{p}'):.1g})" for p in PNS) + " |")
             L += ["", f"cells with real > flat ({m}) per depth: " + ", ".join(f"{p}: {(E[f'd_rf_{m}_{p}'] > 0).sum()}/{len(E)} (p<0.05 {((E[f'p_rf_{m}_{p}'] < 0.05) & (E[f'd_rf_{m}_{p}'] > 0)).sum()}+ {((E[f'p_rf_{m}_{p}'] < 0.05) & (E[f'd_rf_{m}_{p}'] < 0)).sum()}-)" for p in PNS),
                   f"cells with real > noise ({m}) per depth: " + ", ".join(f"{p}: {(E[f'd_rn_{m}_{p}'] > 0).sum()}/{len(E)} (p<0.05 {((E[f'p_rn_{m}_{p}'] < 0.05) & (E[f'd_rn_{m}_{p}'] > 0)).sum()}+ {((E[f'p_rn_{m}_{p}'] < 0.05) & (E[f'd_rn_{m}_{p}'] < 0)).sum()}-)" for p in PNS)]
-        fig, axs = plt.subplots(2, len(vt.TASKS), figsize=(2.1 * len(vt.TASKS), 5.2), squeeze=False)
+            if f"rand_{m}_{PNS[0]}" in E.columns:
+                L += [f"random-init floor ({m}), median over cells of the per-cell median, rand / flat / real per depth: " + ", ".join(f"{p}: {E[f'rand_{m}_{p}'].median():.2f} / {E[f'flat_{m}_{p}'].median():.2f} / {E[f'real_{m}_{p}'].median():.2f}" for p in PNS),
+                      f"cells with real > rand ({m}): " + ", ".join(f"{p}: {(E[f'real_{m}_{p}'] > E[f'rand_{m}_{p}']).sum()}/{len(E)}" for p in PNS) + "; flat > rand: " + ", ".join(f"{p}: {(E[f'flat_{m}_{p}'] > E[f'rand_{m}_{p}']).sum()}/{len(E)}" for p in PNS)]
+        # section 5e: radial power spectrum of the gradient map (Fourier sensitivity profile) and its spectral centroid, full / p2 / p3, per arm
+        SPN = [nm for nm in ("full", "p2", "p3") if f"real_cent_{nm}" in St.columns]
+        if SPN:
+            arms_s = ARMS + (("rand",) if "rand_cent_full" in St.columns else ())
+            rows = []
+            for k in cells:
+                d = St[St.cell == k]; pc = d.groupby("case").median(numeric_only=True); r = dict(cell=k, task=d.task.iloc[0], n=len(pc))
+                for nm in SPN:
+                    for a in arms_s:
+                        r[f"{a}_cent_{nm}"] = pc[f"{a}_cent_{nm}"].median()
+                    dd = pc[f"real_cent_{nm}"] - pc[f"flat_cent_{nm}"]; r[f"d_rf_cent_{nm}"] = dd.median(); r[f"p_rf_cent_{nm}"] = wp(dd)
+                    dn = pc[f"real_cent_{nm}"] - pc[f"noise_cent_{nm}"]; r[f"d_rn_cent_{nm}"] = dn.median(); r[f"p_rn_cent_{nm}"] = wp(dn)
+                rows.append(r)
+            C = pd.DataFrame(rows); C.to_csv(OUT / "pathgrad_spectrum_cells.csv", index=False)
+            L += ["", "## 5e. Spectral centroid (cycles / voxel) of the radially averaged power spectrum of the gradient map; " + " / ".join(arms_s) + ", then real - flat (p) and real - noise (p)", "",
+                  "| cell | n | " + " | ".join(SPN) + " | " + " | ".join(f"d_rf {nm}" for nm in SPN) + " | " + " | ".join(f"d_rn {nm}" for nm in SPN) + " |", "|" + "---|" * (2 + 3 * len(SPN))]
+            for r in C.itertuples():
+                L.append(f"| {r.cell} | {r.n} | " + " | ".join("/".join(f"{getattr(r, f'{a}_cent_{nm}'):.3f}" for a in arms_s) for nm in SPN) + " | "
+                         + " | ".join(f"{getattr(r, f'd_rf_cent_{nm}'):+.4f} ({getattr(r, f'p_rf_cent_{nm}'):.1g})" for nm in SPN) + " | " + " | ".join(f"{getattr(r, f'd_rn_cent_{nm}'):+.4f} ({getattr(r, f'p_rn_cent_{nm}'):.1g})" for nm in SPN) + " |")
+            L += ["", "cells with real > flat (centroid): " + ", ".join(f"{nm}: {(C[f'd_rf_cent_{nm}'] > 0).sum()}/{len(C)} (p<0.05 {((C[f'p_rf_cent_{nm}'] < 0.05) & (C[f'd_rf_cent_{nm}'] > 0)).sum()}+ {((C[f'p_rf_cent_{nm}'] < 0.05) & (C[f'd_rf_cent_{nm}'] < 0)).sum()}-)" for nm in SPN),
+                  "cells with real > noise (centroid): " + ", ".join(f"{nm}: {(C[f'd_rn_cent_{nm}'] > 0).sum()}/{len(C)}" for nm in SPN)]
+            fq = (np.arange(NB) + 0.5) * 0.5 / NB
+            fig, axs = plt.subplots(len(SPN), len(vt.TASKS), figsize=(2.1 * len(vt.TASKS), 2.4 * len(SPN)), squeeze=False)
+            for j, t in enumerate(vt.TASKS):
+                d = St[St.task == t]; pc = d.groupby(["cell", "case"]).median(numeric_only=True)
+                for i, nm in enumerate(SPN):
+                    ax = axs[i, j]
+                    for a in arms_s:
+                        y = np.array([pc[f"{a}_rps_{nm}_{b_}"].median() for b_ in range(NB)]); ax.plot(fq, y, "-", color=PAL.get(a, "0.4"), lw=1.1, label=a)
+                    ax.set_yscale("log"); ax.tick_params(labelsize=6)
+                    if i == 0:
+                        ax.set_title(f"{t} (n={len(pc)})", fontsize=8)
+                    if j == 0:
+                        ax.set_ylabel(f"{nm}: power share", fontsize=7)
+                    if i == len(SPN) - 1:
+                        ax.set_xlabel("cycles / voxel", fontsize=7)
+            axs[0, 0].legend(fontsize=6)
+            fig.suptitle("Fourier sensitivity profile: radially averaged power spectrum of the decision's input gradient (median over cases), per arm; full gradient and the stride-4 / stride-8 paths; grey = random-init floor if present", fontsize=7.5)
+            fig.tight_layout(rect=[0, 0, 1, 0.93]); fig.savefig(OUT / "pathgrad_spectrum.png", dpi=170); fig.savefig(OUT / "pathgrad_spectrum.pdf"); plt.close(fig)
+        fig, axs = plt.subplots(len(MT), len(vt.TASKS), figsize=(2.1 * len(vt.TASKS), 2.6 * len(MT)), squeeze=False)
         for j, t in enumerate(vt.TASKS):
             d = St[St.task == t]; pc = d.groupby(["cell", "case"]).median(numeric_only=True)
-            for i, (m, yl) in enumerate((("local", "spread: local share of |Gk|"), ("fine", "grain: fine-detail share of Gk"))):
+            for i, (m, yl) in enumerate(MT):
                 ax = axs[i, j]
                 for a in ARMS:
                     y = [pc[f"{a}_{m}_{p}"].median() for p in PNS]; lo = [pc[f"{a}_{m}_{p}"].quantile(0.25) for p in PNS]; hi = [pc[f"{a}_{m}_{p}"].quantile(0.75) for p in PNS]
@@ -472,10 +546,85 @@ def zoom_figure(W=16, n_per_task=2):
     fig.tight_layout(rect=[0, 0, 1, 0.98]); fig.savefig(OUT / "pathgrad_zoom_examples.png", dpi=170); plt.close(fig); print("ZOOMFIG_DONE", flush=True)
 
 
+def zoom_hp_figure(W=16, n_per_task=2, paths=("p3", "p4"), s=1.0):
+    """Paul 2026-10-13: show the GRAIN itself. For each path: |Gk| of the flat and the real decision, then the high-pass map |Gk - gaussian(Gk, s)| / |Gk|_crop
+    (unit-energy normalised, so the two arms share one scale and the speckle shows directly); grain of the crop in the title."""
+    P = pd.read_csv(PICKS, dtype=str); allp = [r for r in P.itertuples() if (OUT / r.cell / f"{r.case}_pgex.npz").exists()]
+    picks = []
+    for t in dict.fromkeys(r.task for r in allp):
+        picks += [r for r in allp if r.task == t][:n_per_task]
+    cols = ["image + GT"] + [f"{a}: {p} {w}" for p in paths for w in ("|G|", "high-pass") for a in ("flat", "real")]
+    fig, axs = plt.subplots(len(picks), len(cols), figsize=(2.1 * len(cols), 2.2 * len(picks)), squeeze=False)
+    for i, s_ in enumerate(picks):
+        z = np.load(OUT / s_.cell / f"{s_.case}_pgex.npz", allow_pickle=True); j = int(np.where(z["seed"] == int(s_.seed))[0][0])
+        v = (int(z["seeds"][j][1]), int(z["seeds"][j][2])); sl = (slice(max(0, v[0] - W), v[0] + W), slice(max(0, v[1] - W), v[1] + W))
+        img = z["img"][j].astype(np.float32); g = z["gt"][j]; lo_, hi_ = np.percentile(img[img != 0] if (img != 0).any() else img, [1, 99])
+        M, H, GR = {}, {}, {}
+        for p in paths:
+            for a in ("flat", "real"):
+                Gk = z[f"{a}_{p}"][j].astype(np.float32)[sl]; nrm = np.sqrt((Gk ** 2).sum()) + 1e-30; hp = Gk - ndi.gaussian_filter(Gk, s)
+                M[a, p] = np.abs(Gk) / nrm; H[a, p] = np.abs(hp) / nrm; GR[a, p] = float((hp ** 2).sum() / (Gk ** 2).sum()) if (Gk ** 2).sum() > 0 else float("nan")
+        vm = {p: max(np.percentile(M[a, p], 99.5) for a in ("flat", "real")) + 1e-12 for p in paths}; vh = {p: max(np.percentile(H[a, p], 99.5) for a in ("flat", "real")) + 1e-12 for p in paths}
+        for c, nm in enumerate(cols):
+            ax = axs[i, c]; ax.set_xticks([]); ax.set_yticks([])
+            if c == 0:
+                ax.imshow(img[sl], cmap="gray", vmin=lo_, vmax=hi_, interpolation="nearest"); ax.contour(g[sl], [0.5], colors="#00b4ff", linewidths=0.7)
+                ax.set_ylabel(f"{s_.task}\n{s_.cell}\n{s_.case} ({s_.pattern})", fontsize=5.5)
+            else:
+                a, rest = nm.split(": "); p, w = rest.split(" ", 1)
+                if w == "|G|":
+                    ax.imshow(M[a, p], cmap="magma", vmin=0, vmax=vm[p], interpolation="nearest"); ax.set_title(f"{a}: {p} |G|", fontsize=6, color=PAL[a])
+                else:
+                    ax.imshow(H[a, p], cmap="magma", vmin=0, vmax=vh[p], interpolation="nearest"); ax.set_title(f"{a}: {p} |G - blur G|\ngrain {GR[a, p]:.2f}", fontsize=6, color=PAL[a])
+                ax.contour(g[sl], [0.5], colors="white", linewidths=0.4)
+            ax.plot(v[1] - sl[1].start, v[0] - sl[0].start, "+", color="cyan", ms=7, mew=0.9)
+    fig.suptitle(f"Grain made visible: zoom +/- {W} voxels on the decision voxel (+); per path (stride 8 = p3, stride 16 = p4) the gradient map |Gk| and its high-pass |Gk - gaussian(Gk, {s:g})|, "
+                 "both divided by |Gk| over the crop so flat and real share one scale; grain = high-pass energy share of the crop. Contour = GT.", fontsize=7)
+    fig.tight_layout(rect=[0, 0, 1, 0.98]); fig.savefig(OUT / "pathgrad_zoom_hp.png", dpi=170); plt.close(fig); print("ZOOMHP_DONE", flush=True)
+
+
+def zoom_lg_figure(W=24, n_per_task=2, paths=("p2", "p3"), s=1.0, sw=3.0):
+    """Paul 2026-10-13 ("is there a better way to process the data?"): the LOCAL grain map, high-pass energy / total energy of Gk in a sliding Gaussian window
+    (sw voxels), for the flat and the real arm, and their difference. Smooth field instead of speckle: where the real decision is finer-grained shows as brighter."""
+    P = pd.read_csv(PICKS, dtype=str); allp = [r for r in P.itertuples() if (OUT / r.cell / f"{r.case}_pgex.npz").exists()]
+    picks = []
+    for t in dict.fromkeys(r.task for r in allp):
+        picks += [r for r in allp if r.task == t][:n_per_task]
+    cols = ["image + GT"] + [f"{w}: {p}" for p in paths for w in ("flat local grain", "real local grain", "real - flat")]
+    fig, axs = plt.subplots(len(picks), len(cols), figsize=(2.2 * len(cols), 2.25 * len(picks)), squeeze=False)
+    for i, s_ in enumerate(picks):
+        z = np.load(OUT / s_.cell / f"{s_.case}_pgex.npz", allow_pickle=True); j = int(np.where(z["seed"] == int(s_.seed))[0][0])
+        v = (int(z["seeds"][j][1]), int(z["seeds"][j][2])); sl = (slice(max(0, v[0] - W), v[0] + W), slice(max(0, v[1] - W), v[1] + W))
+        img = z["img"][j].astype(np.float32); g = z["gt"][j]; lo_, hi_ = np.percentile(img[img != 0] if (img != 0).any() else img, [1, 99]); body = img != 0
+        LG = {}
+        for p in paths:
+            for a in ("flat", "real"):
+                Gk = z[f"{a}_{p}"][j].astype(np.float32); hp = Gk - ndi.gaussian_filter(Gk, s)
+                num = ndi.gaussian_filter(hp ** 2, sw); den = ndi.gaussian_filter(Gk ** 2, sw); lg = num / (den + 1e-30); lg[den < 1e-3 * den.max()] = np.nan   # undefined where there is no gradient
+                LG[a, p] = lg
+        for c, nm in enumerate(cols):
+            ax = axs[i, c]; ax.set_xticks([]); ax.set_yticks([])
+            if c == 0:
+                ax.imshow(img[sl], cmap="gray", vmin=lo_, vmax=hi_, interpolation="nearest"); ax.contour(g[sl], [0.5], colors="#00b4ff", linewidths=0.7)
+                ax.set_ylabel(f"{s_.task}\n{s_.cell}\n{s_.case} ({s_.pattern})", fontsize=5.5)
+            else:
+                w, p = nm.split(": ")
+                if w == "real - flat":
+                    D = LG["real", p] - LG["flat", p]; ax.imshow(D[sl], cmap="RdBu_r", vmin=-0.3, vmax=0.3, interpolation="nearest")
+                    ax.set_title(f"{p}: real - flat\nmean {np.nanmean(D[sl]):+.2f}", fontsize=6)
+                else:
+                    a = w.split()[0]; ax.imshow(LG[a, p][sl], cmap="viridis", vmin=0, vmax=1, interpolation="nearest"); ax.set_title(f"{a}: {p} local grain\nmean {np.nanmean(LG[a, p][sl]):.2f}", fontsize=6, color=PAL[a])
+                ax.contour(g[sl], [0.5], colors="white", linewidths=0.4)
+            ax.plot(v[1] - sl[1].start, v[0] - sl[0].start, "+", color="cyan", ms=7, mew=0.9)
+    fig.suptitle(f"Local grain of the decision's gradient (+ = decision voxel): high-pass (sigma {s:g}) energy share of Gk in a sliding Gaussian window (sigma {sw:g}), flat vs real and their difference (red = real finer); "
+                 "grey/NaN where the path carries no gradient. Contour = GT.", fontsize=7)
+    fig.tight_layout(rect=[0, 0, 1, 0.98]); fig.savefig(OUT / "pathgrad_zoom_lg.png", dpi=170); plt.close(fig); print("ZOOMLG_DONE", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--cells", nargs="*", default=[]); ap.add_argument("--case-slice", default=None); ap.add_argument("--report", action="store_true")
     ap.add_argument("--pick-examples", action="store_true"); ap.add_argument("--example-grads", action="store_true"); ap.add_argument("--task-figure", action="store_true")
-    ap.add_argument("--zoom-figure", action="store_true")
+    ap.add_argument("--zoom-figure", action="store_true"); ap.add_argument("--zoom-hp", action="store_true"); ap.add_argument("--zoom-lg", action="store_true")
     a = ap.parse_args()
     if a.pick_examples:
         pick_examples()
@@ -485,7 +634,11 @@ def main():
         zoom_figure()
     if a.report:
         report()
-    if a.report or a.task_figure or a.pick_examples or a.zoom_figure:
+    if a.zoom_hp:
+        zoom_hp_figure()
+    if a.zoom_lg:
+        zoom_lg_figure()
+    if a.report or a.task_figure or a.pick_examples or a.zoom_figure or a.zoom_hp or a.zoom_lg:
         return
     import torch
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
