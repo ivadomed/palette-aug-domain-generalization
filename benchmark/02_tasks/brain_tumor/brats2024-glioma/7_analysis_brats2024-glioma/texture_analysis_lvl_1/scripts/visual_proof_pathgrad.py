@@ -317,10 +317,10 @@ def report():
                     dn = pc[f"real_{m}_{p}"] - pc[f"noise_{m}_{p}"]; r[f"d_rn_{m}_{p}"] = dn.median(); r[f"p_rn_{m}_{p}"] = wp(dn)
             rows.append(r)
         E = pd.DataFrame(rows); E.to_csv(OUT / "pathgrad_depth_localfine_cells.csv", index=False)
-        MT = [("local", "spread: fraction of |Gk| within r_loc of the voxel (1 = compact)"), ("fine", "grain: fine-detail share of Gk (energy above a sigma-1 Gaussian)"), ("fine2", "grain at sigma 2 (energy above a sigma-2 Gaussian)"), ("fine3", "grain at sigma 3 (energy above a sigma-3 Gaussian)")]
+        MT = [("local", "spread: fraction of |Gk| within r_loc of the voxel (1 = compact)"), ("fine", "grain: fine-detail share of Gk (energy above a sigma-1 Gaussian)"), ("fine2", "grain at sigma 2 (energy above a sigma-2 Gaussian)"), ("fine3", "grain at sigma 3 (energy above a sigma-3 Gaussian)"), ("finef", "PER-FOLD grain: fine-detail share of each fold's own Gk (sigma-1 Gaussian), mean over folds; no fold-agreement mixing")]
         MT = [(m, t) for m, t in MT if f"d_rf_{m}_{PNS[0]}" in E.columns]
         for m, title in MT:
-            L += ["", f"## 5{'abcd'[[x for x, _ in MT].index(m)]}. Per depth, {title}; noise / flat / real, then real - flat (p)", "",
+            L += ["", f"## 5{'abcdf'[[x for x, _ in MT].index(m)]}. Per depth, {title}; noise / flat / real, then real - flat (p)", "",
                   "| cell | n | " + " | ".join(PNS) + " | " + " | ".join(f"d {p}" for p in PNS) + " |", "|" + "---|" * (2 + 2 * len(PNS))]
             for r in E.itertuples():
                 L.append(f"| {r.cell} | {r.n} | " + " | ".join(f"{getattr(r, f'noise_{m}_{p}'):.2f}/{getattr(r, f'flat_{m}_{p}'):.2f}/{getattr(r, f'real_{m}_{p}'):.2f}" for p in PNS) + " | "
