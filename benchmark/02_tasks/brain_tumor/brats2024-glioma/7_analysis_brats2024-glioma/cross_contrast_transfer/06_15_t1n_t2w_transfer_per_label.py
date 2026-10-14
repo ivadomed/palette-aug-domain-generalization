@@ -54,6 +54,18 @@ DIRECTIONS = [
      METRICS_ROOT / "t2w/ablations/auglab_brats2024-glioma_t2w_baseline_kmeans_label_remap_voronoi_lblvor_20261007_170621",
      "t1n"),
 ]
+# BASE_ARM=flat (2026-10-14): compare real fill with the FLAT-fill rung 4.5 instead of the noise fill (the paper's
+# tested step since it became flat -> real); output goes to t1n_t2w_transfer_per_label_flat/.
+import os  # noqa: E402
+BASE_ARM = os.environ.get("BASE_ARM", "noise")
+if BASE_ARM == "flat":
+    DIRECTIONS = [
+        (DIRECTIONS[0][0], DIRECTIONS[0][1],
+         METRICS_ROOT / "t1n/ablations/auglab_brats2024-glioma_t1n_baseline_kmeans_label_remap_voronoi_flatfill_20261008_190618", "t2w"),
+        (DIRECTIONS[1][0], DIRECTIONS[1][1],
+         METRICS_ROOT / "t2w/ablations/auglab_brats2024-glioma_t2w_baseline_kmeans_label_remap_voronoi_flatfill_20261008_190652", "t1n"),
+    ]
+    OUT_DIR = OUT_DIR.with_name(OUT_DIR.name + "_flat")
 
 
 def load_per_label(metrics_root: Path, contrast: str) -> dict:
@@ -102,7 +114,7 @@ for lab in LABELS:
     gap = vals[0] - vals[1] if len(vals) == 2 else float("nan")
     lines.append(f"| {lab} | " + " | ".join(f"{v:.1f}" for v in vals) + f" | {gap:+.1f} |")
 
-lines += ["", "## 2. Fill-swap step effect (+voronoi noise fill -> v26_6_2 real fill), per label",
+lines += ["", f"## 2. Fill step effect ({'flat fill' if BASE_ARM == 'flat' else '+voronoi noise fill'} -> v26_6_2 real fill), per label",
           "", "Holm-corrected paired Wilcoxon, family = the 4 labels within each direction "
           "(same test family size/logic as `compute_fillswap_per_contrast.py`'s per-contrast test).",
           "", "| label | " + " | ".join(name for name, *_ in DIRECTIONS) + " |",

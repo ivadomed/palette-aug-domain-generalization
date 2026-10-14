@@ -211,6 +211,55 @@ def _with_pv_branch(fn):
     return wrapper
 
 
+# ── Rung 4.5 (FLAT fill), inserted between noise fill and real fill (2026-10-14) ────────────────────────────────
+# The tested step of the paper is flat fill -> real fill (only the within-region texture term differs). Ladders
+# whose noise-fill rung is registered in ladder_flat_rung.yaml get the flat rung inserted just before the real-fill
+# rung, so _find_fill_swap_idx tests flat -> real and every other adjacent step (incl. noise -> flat) is tested by
+# _rung_step_significance as usual. Default ON; LADDER_FLAT_RUNG=0 reproduces the 7-rung ladders.
+FLAT_RUNG_REGISTRY = Path(__file__).with_name("ladder_flat_rung.yaml")
+FLAT_RUNG_LABEL = "flat fill (rung 4.5)"
+FLAT_RUNG_INGREDIENT = "same partition, flat region-mean fill (no noise, no texture)"
+
+
+def _flat_rung_sources(kw):
+    """(root, src) pairs every rung key is resolved under, for the flat-rung guard."""
+    out = []
+    if kw.get("metrics_root") is not None:
+        out.append((Path(kw["metrics_root"]), None))
+    for src in (kw.get("extra_ood_sources") or []) + list(kw.get("ood_sources") or []):
+        out.append((Path(_src_root(src)), src))
+    return out
+
+
+def _with_flat_rung(fn):
+    @functools.wraps(fn)
+    def wrapper(**kw):
+        import os
+        rungs = list(kw["rungs"])
+        fi = _find_fill_swap_idx(rungs)
+        if (os.environ.get("LADDER_FLAT_RUNG", "1") != "0" and fi is not None and FLAT_RUNG_REGISTRY.exists()
+                and rungs[fi - 1][0] != FLAT_RUNG_LABEL):
+            import yaml
+            reg = (yaml.safe_load(FLAT_RUNG_REGISTRY.read_text()) or {}).get("flat_rungs") or {}
+            prev_key = rungs[fi - 1][2]
+            hits = [(a, b) for a, b in reg.items() if prev_key.endswith(str(a))]
+            if len(hits) > 1:
+                raise ValueError(f"ladder_flat_rung.yaml: {len(hits)} entries match {prev_key}")
+            if hits:
+                flat_key = prev_key[: -len(hits[0][0])] + str(hits[0][1])
+                missing = [str(root) for root, src in _flat_rung_sources(kw)
+                           if resolve_run_dir(root, _src_key(src, prev_key)).is_dir()
+                           and not resolve_run_dir(root, _src_key(src, flat_key)).is_dir()]
+                if missing:
+                    raise FileNotFoundError(f"flat rung {flat_key}: no metrics in {missing} where the noise-fill rung "
+                                            f"has them -- flat and real fill would be averaged over different pools")
+                rungs.insert(fi, (FLAT_RUNG_LABEL, FLAT_RUNG_INGREDIENT, flat_key))
+                print(f"[flat-rung] inserted {flat_key} before {rungs[fi + 1][2]}")
+                kw = {**kw, "rungs": rungs}
+        return fn(**kw)
+    return wrapper
+
+
 def _paired_cases(cases_prev: dict, cases_cur: dict, ns: str = ""):
     """{case_id: (prev, cur)} for cases present in both rungs. Keeps the case id
     (unlike a plain array pair) so pooling across CONTRASTS can recognise the same
@@ -358,6 +407,17 @@ def _fill_swap_significance(pairs_by_contrast):
     return {"per_contrast": per_contrast, "pooled_p": pooled_p, "n_cases": int(len(x))}
 
 
+def _holm_step_families(entries, rungs):
+    """Holm-correct a ladder's step tests in two separate families (2026-10-14): the ABLATION steps (every step up to
+    and including the one into the real-fill rung) and the steps AFTER it (+AugLab, +AugLab val100), which test the
+    final method rather than the ablation. Before, one family held all steps. Writes entry["p_holm"] in place."""
+    fi = _find_fill_swap_idx(rungs)
+    cut = fi if fi is not None else len(entries)      # entries[k] is the step into rung k+1
+    for fam in (entries[:cut], entries[cut:]):
+        for e, adj in zip(fam, holm([e["p_raw"] for e in fam])):
+            e["p_holm"] = adj
+
+
 def _rung_step_significance(pairs_fn, rungs):
     """Every rung-to-rung transition tested, not just the fill swap.
 
@@ -365,7 +425,8 @@ def _rung_step_significance(pairs_fn, rungs):
     rung i-1 to rung i -- the same pairing _fill_swap_significance consumes,
     which is why this reuses it wholesale instead of re-deriving the statistic.
     Returns one entry per transition with the pooled p, Holm-corrected within
-    THIS ladder's own family of transitions (a ladder cannot see the others),
+    THIS ladder's own families of transitions (_holm_step_families: ablation steps and the final-method steps
+    after the real-fill rung are separate families since 2026-10-14; a ladder cannot see the others),
     plus whether the step was a decrease, which is what lets a table render a
     significant worsening differently from a significant gain rather than
     letting a small p default to reading as "helps".
@@ -393,8 +454,7 @@ def _rung_step_significance(pairs_fn, rungs):
                     "p_raw": wilcoxon_p(x, y),
                     "decrease": bool(np.mean(y) < np.mean(x)),
                     "n_cases": int(len(x))})
-    for entry, adj in zip(out, holm([e["p_raw"] for e in out])):
-        entry["p_holm"] = adj
+    _holm_step_families(out, rungs)
     return out
 
 
@@ -444,6 +504,7 @@ def _per_contrast_table_md(rungs, contrast_labels, per_contrast) -> list[str]:
     return lines
 
 
+@_with_flat_rung
 @_with_pv_branch
 def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
               in_domain, ood_contrasts, rungs, combined_png=True, extra_ood_sources=None,
@@ -766,6 +827,7 @@ def _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contras
     return {c: per_source.get(c, float("nan")) for c in contrast_labels}
 
 
+@_with_flat_rung
 @_with_pv_branch
 def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablations_root,
                               rungs, in_domain_source=None, combined_png=True,
@@ -1061,6 +1123,7 @@ def _labelled_case_values(metrics_root, ood_contrasts, extra_ood_sources, run_ke
     return out
 
 
+@_with_flat_rung
 @_with_pv_branch
 def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_root,
                        ood_contrasts, rungs, extra_ood_sources, ood_groups):
@@ -1148,8 +1211,7 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
             st.append({"from": rungs[i - 1][0], "to": rungs[i][0], "p_raw": pp,
                        "decrease": bool(series[m][i] < series[m][i - 1]), "n_cases": n,
                        "per_group_p_holm": pg})
-        for e, adj in zip(st, holm([e["p_raw"] for e in st])):
-            e["p_holm"] = adj
+        _holm_step_families(st, rungs)
         steps[m] = st
 
     lines = [f"# {task_name} — causal ablation ladder (OOD, pooled by contrast)", "",
@@ -1180,7 +1242,7 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
             lines.append("| *fill-swap p (Holm)* | " + " | ".join(
                 f"{sig[m]['per_contrast'][g]:.2g}" for g in groups) + " |")
     if fill_idx is not None:
-        lines += ["", f"Fill-swap (noise→real fill) pooled OOD: Dice p={sig['dice']['pooled_p']:.2g}, "
+        lines += ["", f"Fill-swap ({rungs[fill_idx - 1][0]} → {rungs[fill_idx][0]}) pooled OOD: Dice p={sig['dice']['pooled_p']:.2g}, "
                       f"HD95 p={sig['hd95']['pooled_p']:.2g} (n={sig['dice']['n_cases']} patients)."]
 
     ablations_root.mkdir(parents=True, exist_ok=True)
