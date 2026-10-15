@@ -106,9 +106,12 @@ LADDERS = [
     ("brain_healthy/on-harmony/8_results_on-harmony/02_metrics/on_harmony_model/{t}/ablations/ladder_series.json", "onharmony", "onharmony", "brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/dataset.json"),
     ("mandible_healthy/toothfairy2/8_results_toothfairy2/02_metrics/toothfairy2_model/{t}/ablations/ladder_series.json", "toothfairy2", "", "mandible_healthy/toothfairy2/2_nnUNet_toothfairy2/raw/Dataset110_ToothFairy2CBCT/dataset.json"),
     ("pancreas_disease/pansegdata/8_results_pansegdata/02_metrics/pansegdata_model/{t}/ablations/ladder_series.json", "pansegdata", "pansegdata", "pancreas_disease/pansegdata/2_nnUNet_pansegdata/raw/Dataset150_PanSegData_T1WCE/dataset.json"),
+    ("pancreas_disease/totalsegmri-pancreas/8_results_totalsegmri-pancreas/02_metrics/pansegdata_model/{t}/ablations/*/ladder_series.json", "pansegdata", "totalsegmri-pancreas", "pancreas_disease/pansegdata/2_nnUNet_pansegdata/raw/Dataset150_PanSegData_T1WCE/dataset.json"),   # 2026-10-15
+    ("pancreas_disease/msd-pancreas/8_results_msd-pancreas/02_metrics/pansegdata_model/{t}/ablations/*/ladder_series.json", "pansegdata", "msd-pancreas", "pancreas_disease/pansegdata/2_nnUNet_pansegdata/raw/Dataset150_PanSegData_T1WCE/dataset.json"),
     ("pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/02_metrics/totalseg_pelvic_model/{t}/ablations/ladder_series.json", "totalseg-pelvic", "totalseg-pelvic", "pelvis_healthy/totalseg-pelvic/2_nnUNet_totalseg-pelvic/raw/Dataset130_TotalsegPelvic_CT/dataset.json"),
 ]
-SKIP_EVAL = {"duke": {"t1wce": ("t1wce_uniap",)}, "ispy1": {"t1wce": ("t1wce",)}}   # same-contrast cross-dataset, not OOD
+SKIP_EVAL = {"duke": {"t1wce": ("t1wce_uniap",)}, "ispy1": {"t1wce": ("t1wce",)},   # same-contrast cross-dataset, not OOD
+             "totalsegmri-pancreas": {"t1wce": ("t1gre",), "t2w": ("t2like",)}}   # 2026-10-15: same items the pansegdata ladders exclude
 
 
 def label_names(path):
@@ -125,7 +128,7 @@ def ladder_cells():
             d = json.load(open(f)); ir = next(i for i, l in enumerate(d["labels"]) if "real fill" in l)
             mroot = Path(f.split("/ablations")[0]); train = mroot.name
             src = f.split("/ablations/")[1].replace("/ladder_series.json", "") if not f.endswith("ablations/ladder_series.json") else ""
-            if eval_alias in ("duke", "ispy1") and src in SKIP_EVAL.get(eval_alias, {}).get(train, ()):
+            if eval_alias in SKIP_EVAL and src in SKIP_EVAL.get(eval_alias, {}).get(train, ()):
                 continue
             dirs = {}
             for rung, key in (("noise", d["run_keys"][ir - 1]), ("real", d["run_keys"][ir])):
