@@ -39,6 +39,26 @@ Meta-config YAML:
       config: "${PROJECT_ROOT}/benchmark/02_tasks/abdomen_healthy/chaos/5_scripts_chaos/06_evaluate/configs/chaos_combined_01_results.yaml"
     - ...
 
+Opt-in OOD-only mode (default off; without it the output is unchanged):
+  ood_only: true          # top level
+  tasks:
+    - name: healthy-spine-tum
+      ...
+      ood_exclude:        # optional per task: training modality -> contrast groups
+        ct: [spinegan_ct] #   (or flat columns) that are NOT out-of-domain for it
+  With `ood_only: true`, every training modality's own models are dropped from the
+  contrast groups that are not out-of-domain for that modality; the other
+  modalities' models stay in those groups (BraTS's t1n column keeps the t2w/t2f/t1c
+  models' cases and loses the t1n model's). Groups per modality, in priority order:
+  the task's `ood_exclude[<modality>]`, else the combined config's `in_domain_group`
+  (HCC: CE_T1w_all), else the group/column named like the modality. Each group
+  expands to all its leaf columns. A listed group or column that the reference
+  run's data for that modality does not contain is a hard error, so a misspelt
+  name can never silently leave the in-domain cases in. Cells, the within-task
+  tests and the pooled test are then computed exactly as in the default mode on
+  what remains (a group left empty drops out of the task's equal-weight mean and
+  of its test design).
+
 Usage:
   python meta_task_heatmap.py <meta_config.yaml>
 Writes: {output_dir}/{output_prefix}_summary.md, _heatmap_dice.png, _heatmap_hd95.png
@@ -69,7 +89,56 @@ _agg = _load_sibling("aggregate_from_config")
 _cms = _load_sibling("combined_modality_summary")
 
 
-def load_task_modalities(task: dict, project_root: str) -> tuple:
+def _group_columns(node) -> set:
+    """Every raw column under a contrast_groups node (dicts recursed)."""
+    if isinstance(node, dict) and "column" not in node:
+        return set().union(*(_group_columns(v) for v in node.values())) if node else set()
+    return {c for c, _ in _agg._leaf_refs(node)}
+
+
+def apply_ood_exclusions(task: dict, cfg: dict, modalities: list, contrast_groups: dict,
+                         ref_key: str) -> list:
+    """OOD-only mode: set each modality's `exclude_columns` (read by
+    combined_modality_summary's loaders) to the columns of its non-OOD groups.
+    Returns human-readable lines describing what was excluded."""
+    override = task.get("ood_exclude") or {}
+    unknown = set(override) - {m["name"] for m in modalities}
+    if unknown:
+        sys.exit(f"task {task['name']}: ood_exclude names unknown modalities {sorted(unknown)}")
+    notes = []
+    for mod in modalities:
+        name = mod["name"]
+        if name in override:
+            groups = list(override[name])
+        elif cfg.get("in_domain_group"):
+            groups = [cfg["in_domain_group"]]
+        else:
+            groups = [name]
+        present = set()
+        run_id = mod["runs"].get(ref_key)
+        if run_id:
+            present = set(_agg.load_run_cases(mod["sources"], run_id, "dice"))
+        cols = set()
+        for g in groups:
+            if contrast_groups and g in contrast_groups:
+                gcols = _group_columns(contrast_groups[g])
+            elif contrast_groups:
+                sys.exit(f"task {task['name']}: modality {name}: '{g}' is not a contrast group "
+                         f"({sorted(contrast_groups)})")
+            else:
+                gcols = {g}
+            if not gcols & present:
+                sys.exit(f"task {task['name']}: modality {name}: excluded group '{g}' has no "
+                         f"data for the reference run (columns present: {sorted(present)})")
+            cols |= gcols
+        mod["exclude_columns"] = cols
+        notes.append(f"{task['name']} / {name}-trained: excluded {', '.join(groups)}"
+                     f" (columns {', '.join(sorted(cols & present))})")
+    return notes
+
+
+def load_task_modalities(task: dict, project_root: str, ood_only: bool = False,
+                         ref_key: str = None, notes: list = None) -> tuple:
     """Load one task's own *_combined_01_results.yaml `modalities:` list, with
     METRICS_ROOT set to that task's dataset so its ${METRICS_ROOT}-relative
     metrics_dir paths expand correctly (same pattern as meta_significance.py).
@@ -107,6 +176,10 @@ def load_task_modalities(task: dict, project_root: str) -> tuple:
             "runs": m.get("runs", {}),
         })
     contrast_groups = cfg.get("contrast_groups") if cfg.get("use_contrast_groups", True) else None
+    if ood_only:
+        lines = apply_ood_exclusions(task, cfg, modalities, contrast_groups, ref_key)
+        if notes is not None:
+            notes += lines
     return modalities, contrast_groups
 
 
@@ -225,9 +298,12 @@ def main():
     out_dir = Path(os.path.expandvars(cfg["output_dir"]))
     ref_key = cfg["ref"]
 
+    ood_only = bool(cfg.get("ood_only", False))
+    ood_notes = []
     tasks = []
     for t in cfg["tasks"]:
-        modalities, contrast_groups = load_task_modalities(t, project_root)
+        modalities, contrast_groups = load_task_modalities(t, project_root, ood_only,
+                                                           ref_key, ood_notes)
         if modalities:
             tasks.append({"name": t["name"], "modalities": modalities,
                           "contrast_groups": contrast_groups})
@@ -265,6 +341,11 @@ def main():
         "last row counts the ★. The val100 mirror is listed last for reference only — "
         "excluded from bold, `overall` ranking, significance and counts.", "",
     ]
+    if ood_only:
+        lines += ["**OOD-only mode:** each training modality's models are scored on the "
+                  "contrast groups that are out-of-domain for it only; the other "
+                  "modalities' models still fill those groups. Excluded per setting:", ""]
+        lines += [f"- {n}" for n in ood_notes] + [""]
 
     matrices = {}
     sig_by_metric = {}

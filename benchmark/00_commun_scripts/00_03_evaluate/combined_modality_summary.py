@@ -44,6 +44,12 @@ Config YAML format:
       metrics_dir: "${METRICS_ROOT}/chaos_model/t2spir"
       runs: {...same method keys...}
 
+Optional per-modality `exclude_columns` (a set of tested-column names, normally
+injected by meta_task_heatmap.py's opt-in `ood_only` mode, never written in these
+configs): that modality's models' cases in those columns are skipped by every loader
+below, while the other modalities' cases in the same columns are kept. Absent = no
+change.
+
 Method row order = the key order of the FIRST modality's `runs` mapping
 (YAML preserves insertion order), unless `method_order` is given explicitly.
 A method missing from a modality's `runs` (or with no eval data yet) still
@@ -119,6 +125,8 @@ def load_combined_run(modalities: list, method_key: str) -> tuple:
                 with csv_path.open() as f:
                     for row in csv.DictReader(f):
                         contrast = rename.get(row["group"], f"{prefix}{row['group']}")
+                        if contrast in mod.get("exclude_columns", ()):
+                            continue
                         label = row["label"]
                         for k in ("dice", "hd95"):
                             data[k][contrast][label][tag].append(float(row[k]))
@@ -144,6 +152,8 @@ def load_combined_cases(modalities: list, method_key: str, metric: str) -> dict:
         # modality so pooling across modalities stays equally-weighted (unchanged behaviour).
         per_col = _agg.load_run_cases(mod["sources"], run_id, metric)
         for col, cases in per_col.items():
+            if col in mod.get("exclude_columns", ()):
+                continue
             for case_id, v in cases.items():
                 per[col][f'{mod["name"]}::{case_id}'].append(v)
     return {col: {c: float(np.mean(vs)) for c, vs in cases.items() if vs}
@@ -164,6 +174,8 @@ def load_combined_cases_raw(modalities: list, method_key: str, metric: str) -> d
             continue
         per_col = _agg.load_run_cases_raw(mod["sources"], run_id, metric)
         for col, cases in per_col.items():
+            if col in mod.get("exclude_columns", ()):
+                continue
             for case_id, labs in cases.items():
                 per[col][f'{mod["name"]}::{case_id}'] = labs
     return dict(per)
