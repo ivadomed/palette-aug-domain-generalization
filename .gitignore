@@ -71,6 +71,8 @@ benchmark/_script_backups/
 # (any case, any prefix, e.g. SRCSM_PORT_README.md) is tracked.
 *.md
 !**/*[Rr][Ee][Aa][Dd][Mm][Ee].md
+# The code changelog (history summary by month; no results) is public on purpose.
+!/CHANGELOG.md
 
 # The paper (manuscript, figure scripts, generated tables, video project) lives outside this repo.
 paper/
