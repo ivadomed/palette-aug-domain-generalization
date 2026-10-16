@@ -129,7 +129,7 @@ def run_cell(key, dev, sl=None):
                     acc["E"] = acc["E"] + E[z] / len(FOLDS)
                 for h in hs:
                     h.remove()
-                del o, acts, x; torch.cuda.empty_cache()
+                o = acts = x = None; torch.cuda.empty_cache()   # rebinding (not del) frees the tensors and keeps the hooks' closure name defined
             for kk, v in acc.items():
                 maps[f"{a}_{kk}"] = np.asarray(v, np.float32)
         np.savez_compressed(od / f"{case}.npz", **maps)

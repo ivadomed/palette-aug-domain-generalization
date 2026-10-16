@@ -138,7 +138,7 @@ def fold_predict_and_attribute(pr, k: int, data: np.ndarray, lids, dev):
             mp = F.interpolate(mp, size=tile.shape[2:], mode="trilinear", align_corners=False)[0, 0]
             acc[s][sl[1:]] += mp
         acc_g[sl[1:]] += tile.grad[0, 0].detach().float()
-        del acts, grads, out, tile
+        acts = grads = out = tile = None   # free; rebinding keeps the hook closures' names defined
     maps = {}
     for s in STAGES:
         m = (acc[s] / cnt.clamp(min=1))[revert[1:]].cpu().numpy().astype(np.float32); tot = m.sum()

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Commit message rules (skill git-workflow). Enabled with core.hooksPath, see pre-commit.
+#   BLOCK: empty subject, subject > 100 chars, AI attribution trailers.
+#   warn : subject > 72 chars, no "<area>: " prefix, no blank line before the body.
+msg_file="$1"
+subject="$(grep -v '^#' "$msg_file" | sed -n '1p')"
+second="$(grep -v '^#' "$msg_file" | sed -n '2p')"
+fail=0
+if [ -z "${subject// /}" ]; then
+    echo "commit-msg: BLOCK: empty subject" >&2; fail=1
+elif [ "${#subject}" -gt 100 ]; then
+    echo "commit-msg: BLOCK: subject is ${#subject} chars (max 72, hard limit 100); put details in the body" >&2; fail=1
+elif [ "${#subject}" -gt 72 ]; then
+    echo "commit-msg: warn: subject is ${#subject} chars (target <= 72)" >&2
+fi
+if ! [[ "$subject" =~ ^[A-Za-z0-9_.+/-]+(\([^\)]*\))?:\  ]] && ! [[ "$subject" =~ ^(Merge|Revert) ]]; then
+    echo "commit-msg: warn: no '<area>: ' prefix (e.g. 'pansegdata: ', 'shared: ', 'results: ')" >&2
+fi
+if [ -n "$second" ]; then
+    echo "commit-msg: warn: leave line 2 blank between subject and body" >&2
+fi
+if grep -qiE '^(Co-Authored-By:.*(claude|anthropic)|Claude-Session:)|Generated with \[?Claude' "$msg_file"; then
+    echo "commit-msg: BLOCK: no AI attribution lines in commits (project rule)" >&2; fail=1
+fi
+exit "$fail"

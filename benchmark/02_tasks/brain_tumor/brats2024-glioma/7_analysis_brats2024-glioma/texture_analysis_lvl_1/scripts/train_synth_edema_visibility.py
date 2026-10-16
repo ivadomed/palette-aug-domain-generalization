@@ -447,6 +447,7 @@ def do_grid(args, auglab_root):
         xp = crop(img, starts, np.float32(0)); sp = crop(seg, starts, np.int16(-1))
         z = int(np.argmax((sp == 2).sum(axis=(1, 2))))
         x = torch.from_numpy(xp)[None, None]; sg = torch.from_numpy(sp.astype(np.float32))[None, None]
+        gp = None   # set on the first draw (k == 0, d == 0) and reused for the others
         for k, r in enumerate(("flat", "real")):
             row = row0 + k
             ax = axes[row, 0]

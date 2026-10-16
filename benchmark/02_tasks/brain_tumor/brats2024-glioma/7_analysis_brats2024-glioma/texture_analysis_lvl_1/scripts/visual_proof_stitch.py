@@ -109,7 +109,7 @@ def calib(key, dev):
                     for k in FOLDS:
                         (sa, sk), (ta, tk) = src_tgt(pair, k); X = flat_(sa, sk, loc); Y = flat_(ta, tk, loc)
                         st = axy.setdefault((pair, k, loc), [0.0, 0.0, 0.0]); st[0] = st[0] + Y.sum(1); st[1] = st[1] + X @ Y.T; st[2] = st[2] + (Y * Y).sum(1)
-        del A, cache; torch.cuda.empty_cache(); log(f"[{key}] calib {case}: {time.time() - t0:.0f} s")
+        A = cache = None; torch.cuda.empty_cache(); log(f"[{key}] calib {case}: {time.time() - t0:.0f} s")
     for pair in PAIRS:
         for k in FOLDS:
             out = {}
@@ -180,7 +180,7 @@ def run_cell(key, dev, sl=None):
                             else:
                                 s = int(hl[1]); lg = decoder_from(net, tsk, s + 1, mix(f"d{s}"))
                             d_, j_, p_ = dice_and_j(lg, gp, T); st = acc.setdefault((pair + v, ta, hl), [0, []]); st[0] = st[0] + p_.cpu().numpy() / len(FOLDS); st[1].append(j_)
-                    del mp
+                    mp = None   # free; rebinding instead of del keeps the lambdas' name defined
         del A; torch.cuda.empty_cache()
         rows = [dict(base, kind=kd, arm=arm, loc=hl, dice=dice_prob(P, gp, T), J=float(np.mean(js))) for (kd, arm, hl), (P, js) in acc.items()]
         rows += [dict(base, kind="r2", arm=pair, loc=loc, sse=v[0], sst=v[1]) for (pair, loc), v in r2acc.items()]

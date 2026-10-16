@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Enabled per clone with: git config core.hooksPath scripts/git/hooks (needs the exec bit).
+exec bash "$(git rev-parse --show-toplevel)/scripts/git/check_staged.sh"
