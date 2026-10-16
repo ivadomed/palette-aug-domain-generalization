@@ -5,6 +5,8 @@
 # RUN_JOB_INLINE=1 makes those scripts' own run_job calls execute inside this job. Ladder rungs go to
 # ablations/ where the script supports it (on-harmony's testset eval has no METRICS_SUBDIR: flat, like its
 # rung 5). Then AUDITED against the rung-5 runs' scored-case counts. Run table: tamia_rung6_pv_runs.sh.
+# RUNG_FOLDS (optional, default "0 1 2"): folds to evaluate + audit; when set, the per-fold form of the brats / on-harmony /
+# chaos / open-ms evaluate scripts is called once per fold (other kinds always evaluate all folds).
 #SBATCH --account=aip-jcohen
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
@@ -21,16 +23,17 @@ row=""; for r in "${RUNG_ROWS[@]}"; do IFS='|' read -r name pack f3 f4 f5 f6 f7 
 [ -n "$row" ] || { echo "[eval-job] ERROR: no row ${ROW}" >&2; exit 2; }
 IFS='|' read -r name pack dir envf tenv tc wrapper args run pexp ekind eexp <<<"$row"
 S="$T/$dir/06_evaluate"
-echo "[eval-job] ${name} run=${run} kind=${ekind} host=$(hostname) job=${SLURM_JOB_ID:-?}"
+FOLDS="${RUNG_FOLDS:-0 1 2}"
+echo "[eval-job] ${name} run=${run} kind=${ekind} folds=${FOLDS} host=$(hostname) job=${SLURM_JOB_ID:-?}"
 
 envsetup() { export TRAINING_CONTRAST="$tc"; source "$T/$dir/00_utils/$envf"; source "scripts/cluster/$tenv"; export TRAINING_CONTRAST="$tc"; }
 
 audit() {   # audit <metrics dir to search> <run_id> "item:n ..."  (exactly one nnUNet_<run>/fold{k}/eval_all.csv per fold)
-.venv/bin/python - "$1" "$2" "${RUNG_CAT}" $3 <<'PY'
-import csv, glob, sys, collections
+RUNG_FOLDS="${FOLDS}" .venv/bin/python - "$1" "$2" "${RUNG_CAT}" $3 <<'PY'
+import csv, glob, os, sys, collections
 root, run, cat, exp = sys.argv[1], sys.argv[2], sys.argv[3], dict(x.rsplit(":", 1) for x in sys.argv[4:])
 bad = 0
-for k in (0, 1, 2):
+for k in [int(f) for f in os.environ.get("RUNG_FOLDS", "0 1 2").split()]:
     ps = glob.glob(f"{root}/**/{cat}_{run}/fold{k}/eval_all.csv", recursive=True)
     if len(ps) != 1:
         print(f"AUDIT FAIL fold{k}: {len(ps)} eval_all.csv found {ps}"); bad = 1; continue
@@ -49,16 +52,18 @@ rc=0
 case "${ekind}" in
   brats:*)   # in-process, folds sequential (3 folds x 4 contrasts at once OOM-killed a 64G job before)
     rung6_eval_pre_env "${ekind}"; envsetup; export DATASET_ID="${ekind#brats:}" EVAL_INLINE=1 CATEGORY="${RUNG_CAT}" METRICS_SUBDIR="${RUNG_MSUB}"
-    for F in 0 1 2; do bash "$S/06_01_evaluate_run.sh" "${run}" "${F}" || rc=1; done ;;
+    for F in ${FOLDS}; do bash "$S/06_01_evaluate_run.sh" "${run}" "${F}" || rc=1; done ;;
   onh|onh_best)   # WORKER mode, one fold at a time (06_01_evaluate_testset.sh's CHECKPOINT default: checkpoint_best since 2026-10-06)
     envsetup
-    for F in 0 1 2; do bash "$S/06_01_evaluate_testset.sh" "${run}" "${F}" || rc=1; done ;;
+    for F in ${FOLDS}; do bash "$S/06_01_evaluate_testset.sh" "${run}" "${F}" || rc=1; done ;;
   chaos:*)   # DATASET_ID explicit: the non-primary contrast scores against the wrong GT otherwise
     envsetup; export DATASET_ID="${ekind#chaos:}" CATEGORY="${RUNG_CAT}" METRICS_SUBDIR="${RUNG_MSUB}"
-    bash "$S/06_01_evaluate_run.sh" "${run}" || rc=1 ;;
+    if [ -n "${RUNG_FOLDS:-}" ]; then for F in ${FOLDS}; do bash "$S/06_01_evaluate_run.sh" "${run}" "${F}" || rc=1; done
+    else bash "$S/06_01_evaluate_run.sh" "${run}" || rc=1; fi ;;
   openms_flair)
     envsetup; export METRICS_SUBDIR="${RUNG_MSUB}"
-    bash "$S/06_01_evaluate_run.sh" "${run}" "${RUNG_CAT}" || rc=1 ;;
+    if [ -n "${RUNG_FOLDS:-}" ]; then for F in ${FOLDS}; do bash "$S/06_01_evaluate_run.sh" "${run}" "${RUNG_CAT}" "${F}" || rc=1; done
+    else bash "$S/06_01_evaluate_run.sh" "${run}" "${RUNG_CAT}" || rc=1; fi ;;
   openms_t1w)
     envsetup; export METRICS_SUBDIR="${RUNG_MSUB}"
     bash "$S/06_13_evaluate_t1w.sh" "${run}" "${RUNG_CAT}" || rc=1 ;;
