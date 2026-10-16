@@ -3,6 +3,9 @@
 # dataset's OWN ladder script (no logic here). Submit through run_job, e.g.
 #   run_job --name r5_ladders --gpus 0 --cpus 4 --mem 32G --time 01:30:00 --log $SCRATCH/rung5_val000/ladders.log --wait -- \
 #       bash scripts/cluster/rung5_val000/run_ladders.sh abdomen_t2spir mandible pelvis_ct pelvis_mri breast_t2w
+# Whenever a rung is re-pointed or added (e.g. ladder_flat_rung.yaml), ALSO rerun the companion per-item ladders
+# (breast_companions, pancreas_companions): they read the same rungs and silently stay stale otherwise
+# (2026-10-16: the 10-14 flat-rung pass skipped them). Check with: bash scripts/evaluate/run_audit_ladders.sh
 set -uo pipefail
 cd /project/aip-jcohen/paulh/mri_synthesis_project
 export PROJECT_ROOT="$PWD" RUN_JOB_INLINE=1
@@ -32,6 +35,11 @@ for k in "$@"; do
     ms_t1w)         .venv/bin/python $T/brain_ms/open-ms/5_scripts_open-ms/06_evaluate/06_18_ladder_summary_t1w.py ;;
     breast_companions)  # per-source companion ladders (duke / ispy1 / acrin6698), rung 5 -> val000 since 2026-10-07
                     for f in $T/breast_cancer/{duke-breast-mri,ispy1,acrin6698}/5_scripts_*/06_evaluate/06_1*_ladder_summary_ispy2cross_*.py; do
+                      echo "--- $f"; .venv/bin/python "$f" || exit 1
+                    done ;;
+    pancreas_companions)  # pansegdata companions' per-item ladders (totalsegmri-pancreas, msd-pancreas); amos-pancreas has no
+                          # rung-5 real-fill metrics, so its ladder cannot be built and is left out on purpose
+                    for f in $T/pancreas_disease/{totalsegmri-pancreas,msd-pancreas}/5_scripts_*/06_evaluate/06_1*_ladder_summary_pansegdatacross_*.py; do
                       echo "--- $f"; .venv/bin/python "$f" || exit 1
                     done ;;
     *) echo "unknown ladder key $k"; false ;;
