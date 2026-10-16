@@ -140,11 +140,15 @@ cd "${PROJECT_ROOT}"
 DATASET_ID_DEFAULT="0NN"
 NNUNET_NUM_EPOCHS_DEFAULT="500"
 # NNUNET_ITERS_PER_EPOCH_DEFAULT="150"   # optional — omit to keep nnU-Net's built-in default
+DA_WORKERS_DEFAULT="8"            # data loader: ONE value per dataset (the headline competitors' setting)
+NNUNET_COMPILE_DEFAULT="1"
 source "${PROJECT_ROOT}/benchmark/00_commun_scripts/00_01_train/train_common.sh" "$@"
 ```
-Method wrappers (`04_0X_train_<method>.sh`) set `METHOD`, `TRAINER`, `DA_WORKERS`, `LOG_DIR`
-(and optionally `NNUNET_NUM_EPOCHS`, `nnUNet_compile`, `GPUS_PER_FOLD`, `FOLD_SLOT_GPU`,
-`SINGLE_FOLD`), then `source ../04_train/04_00_common.sh "$@"`. Launch:
+Method wrappers (`04_0X_train_<method>.sh`) set `METHOD`, `TRAINER`, `LOG_DIR`
+(and optionally `NNUNET_NUM_EPOCHS`, `GPUS_PER_FOLD`, `FOLD_SLOT_GPU`,
+`SINGLE_FOLD`), then `source ../04_train/04_00_common.sh "$@"`. They never set `DA_WORKERS` /
+`nnUNet_compile`: train_common.sh refuses a value different from the shim's default unless
+`ALLOW_METHOD_LOADER_OVERRIDE=1` (deliberate, printed as a warning; the validator flags wrappers that set them). Launch:
 ```bash
 bash 04_07_train_baseline.sh                 # fresh run (auto RUN_ID)
 bash 04_07_train_baseline.sh <RUN_ID>        # resume / extend (raise NNUNET_NUM_EPOCHS to extend)
@@ -197,9 +201,9 @@ and aggregates across folds/experiments:
 ## Driver contracts (quick reference)
 
 **`00_01_train/train_common.sh`** — shim sets `DATASET_ID_DEFAULT`,
-`NNUNET_NUM_EPOCHS_DEFAULT`, opt. `NNUNET_ITERS_PER_EPOCH_DEFAULT`; wrapper sets `METHOD`,
-`TRAINER`, `DA_WORKERS`, `LOG_DIR`; opt. `NNUNET_RESULTS_BASE`, `GPUS_PER_FOLD` (1 or 2/DDP),
-`NNUNET_NUM_EPOCHS`, `nnUNet_compile`, `SINGLE_FOLD`/`SINGLE_SLOT`/`SINGLE_GPU`,
+`NNUNET_NUM_EPOCHS_DEFAULT`, `DA_WORKERS_DEFAULT`, `NNUNET_COMPILE_DEFAULT`, opt. `NNUNET_ITERS_PER_EPOCH_DEFAULT`; wrapper sets `METHOD`,
+`TRAINER`, `LOG_DIR`; opt. `NNUNET_RESULTS_BASE`, `GPUS_PER_FOLD` (1 or 2/DDP),
+`NNUNET_NUM_EPOCHS`, `SINGLE_FOLD`/`SINGLE_SLOT`/`SINGLE_GPU`,
 `FOLD_SLOT_GPU`, `RESUME_WANDB_IDS`, `LAUNCH_WAIT`. `$1` = `RUN_ID` (resume).
 
 **`00_02_predict/predict_common.sh`** — shim sets `PREDICT_MODE` (`own`|`cross`),

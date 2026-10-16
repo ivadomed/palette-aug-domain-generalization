@@ -16,9 +16,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerPANSEGDATAAugLabDefault"
 DATASET_ID="${DATASET_ID_T1WCE}"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_pansegdata_t1wce_v26_6_2_train050_val000"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

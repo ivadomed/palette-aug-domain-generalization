@@ -175,6 +175,43 @@ def _slot_and_type(name: str):
     return parts[0], parts[1]
 
 
+# ── 04_train/ data-loader settings: one per DATASET, never per method (2026-10-16) ──
+# DA workers (nnUNet_n_proc_DA) and torch.compile change the time per epoch, not the method. Set per wrapper,
+# they drifted (headline OURS DualVal wrappers at 0 workers / no compile next to competitors at 8 / compile on,
+# ~3x slower per epoch, latency probe 2026-10-15). The dataset shim 04_00_common.sh sets DA_WORKERS_DEFAULT /
+# NNUNET_COMPILE_DEFAULT and train_common.sh refuses a different value unless ALLOW_METHOD_LOADER_OVERRIDE=1.
+# Advisory: flag any 04_XX wrapper that sets one of these without that explicit override flag, and a training
+# shim without the defaults.
+LOADER_SETTING_RE = re.compile(r"^[^#\n]*\b(DA_WORKERS|nnUNet_n_proc_DA|nnUNet_compile|BLOSC2?_NTHREADS)=", re.M)
+LOADER_OVERRIDE_RE = re.compile(r"^[^#\n]*\bALLOW_METHOD_LOADER_OVERRIDE=1\b", re.M)
+
+
+def validate_train_loader_settings(sc_path: Path) -> list[str]:
+    warnings: list[str] = []
+    train_dir = sc_path / "04_train"
+    if not train_dir.is_dir():
+        return warnings
+    shim = train_dir / "04_00_common.sh"
+    if shim.is_file() and "train_common.sh" in shim.read_text(errors="replace"):
+        txt = shim.read_text(errors="replace")
+        for var in ("DA_WORKERS_DEFAULT", "NNUNET_COMPILE_DEFAULT"):
+            if not re.search(rf"^{var}=", txt, re.M):
+                warnings.append(f"  [04_train] WARN 04_00_common.sh does not set {var} "
+                                f"(one data-loader setting per dataset, see train_common.sh)")
+    for f in sorted(train_dir.glob("04_*.sh")):
+        if f.name == "04_00_common.sh":
+            continue
+        txt = f.read_text(errors="replace")
+        if "04_00_common.sh" not in txt:  # launchers / run-all scripts, not per-method wrappers
+            continue
+        hits = sorted({m.group(1) for m in LOADER_SETTING_RE.finditer(txt)})
+        if hits and not LOADER_OVERRIDE_RE.search(txt):
+            warnings.append(f"  [04_train] WARN per-method wrapper sets {', '.join(hits)} (must come from "
+                            f"04_00_common.sh's dataset default; deliberate override needs "
+                            f"ALLOW_METHOD_LOADER_OVERRIDE=1): {f.name}")
+    return warnings
+
+
 def validate_dataset(ds_path: Path) -> list[str]:
     errors: list[str] = []
     ds = ds_path.name
@@ -243,6 +280,8 @@ def validate_dataset(ds_path: Path) -> list[str]:
         # env.sh must exist
         if not (sc_path / "00_utils" / "env.sh").exists():
             errors.append("  [5_scripts] missing 00_utils/env.sh")
+        # data-loader settings live in 04_00_common.sh, never in a per-method wrapper (advisory)
+        errors.extend(validate_train_loader_settings(sc_path))
         # every item must be a numbered dir
         for item in sorted(sc_path.iterdir()):
             if item.name.startswith("."):

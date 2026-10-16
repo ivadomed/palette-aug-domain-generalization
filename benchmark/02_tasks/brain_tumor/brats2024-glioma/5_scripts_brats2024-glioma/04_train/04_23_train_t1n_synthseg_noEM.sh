@@ -12,9 +12,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="synthseg_noEM"
 TRAINER="nnUNetTrainerBraTS2024GliomaAugLabDefault"
 DATASET_ID="051"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_brats2024_t1n_synthseg_noEM"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2500}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

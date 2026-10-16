@@ -11,9 +11,7 @@ source "$(dirname "$0")/../00_utils/env_t2spir.sh"
 METHOD="auglabAugTexlite_v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerCHAOSAugLabV26_6_2"
 DATASET_ID="061"
-DA_WORKERS="${DA_WORKERS:-0}"
 LOG_DIR="/tmp/nnunet_chaos_t2spir_auglabAugTexlite_v26_6_2_train050_val000"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

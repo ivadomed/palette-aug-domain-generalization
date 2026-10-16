@@ -6,7 +6,6 @@
 source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="synthseg_EM"
 TRAINER="nnUNetTrainerOnHarmonyAugLabDefault"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_on-harmony_t1w_synthseg_EM"
 export NNUNET_NUM_EPOCHS=2000
 

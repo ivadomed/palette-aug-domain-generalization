@@ -11,6 +11,7 @@ source "$(dirname "$0")/../00_utils/env_t2w.sh"
 METHOD="baseline"
 TRAINER="nnUNetTrainerBraTS2024GliomaT2wBaseline"
 DATASET_ID="052"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: nnU-Net's own CPU augmentation runs in the DA workers (baseline needs more of them)
 DA_WORKERS=16
 LOG_DIR="/tmp/nnunet_brats2024_t2w_baseline"
 export nnUNet_compile=0

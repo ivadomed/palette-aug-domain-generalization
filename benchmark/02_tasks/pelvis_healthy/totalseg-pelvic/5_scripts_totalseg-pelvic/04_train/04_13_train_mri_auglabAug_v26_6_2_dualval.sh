@@ -6,9 +6,7 @@ source "$(dirname "$0")/../00_utils/env_mri.sh"
 METHOD="auglabAug_v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerTotalsegPelvicAugLabDualVal"
 DATASET_ID="131"
-DA_WORKERS=0
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_totalseg_pelvic_mri_auglabAug_v26_6_2_dualval"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

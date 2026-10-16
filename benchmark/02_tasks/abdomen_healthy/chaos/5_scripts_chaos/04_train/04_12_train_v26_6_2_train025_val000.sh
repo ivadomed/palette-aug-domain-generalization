@@ -9,6 +9,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="v26_6_2_train025_val000"
 TRAINER="nnUNetTrainerCHAOSV26_6_2_train025_val000"
 DATASET_ID="060"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: historical setting of the runs already trained with this wrapper (loader settings change speed, not the method)
 DA_WORKERS="${DA_WORKERS:-8}"
 LOG_DIR="/tmp/nnunet_chaos_v26_6_2_train025_val000"
 export nnUNet_compile=1

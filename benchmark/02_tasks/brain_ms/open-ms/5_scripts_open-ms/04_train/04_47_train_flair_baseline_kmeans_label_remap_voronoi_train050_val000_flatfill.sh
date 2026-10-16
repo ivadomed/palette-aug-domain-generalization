@@ -17,9 +17,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="baseline_kmeans_label_remap_voronoi_train050_val000_flatfill"
 TRAINER="nnUNetTrainerOpenMSAugLabDefault"
 DATASET_ID="070"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_open-ms_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

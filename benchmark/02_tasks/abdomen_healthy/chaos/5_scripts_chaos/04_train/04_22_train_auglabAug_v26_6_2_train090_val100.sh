@@ -12,6 +12,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAug_v26_6_2_train090_val100"
 TRAINER="nnUNetTrainerCHAOSAugLabValSynth"
 DATASET_ID="060"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: historical setting of the runs already trained with this wrapper (loader settings change speed, not the method)
 DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_chaos_auglabAug_v26_6_2_train090_val100"
 export nnUNet_compile=1

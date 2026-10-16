@@ -10,7 +10,6 @@
 source "$(dirname "$0")/../00_utils/env_t2w.sh"
 METHOD="auglabAug_v26_6_2_pv_train050_val000"
 TRAINER="nnUNetTrainerOnHarmonyAugLabDefault"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_on-harmony_t2w_auglabAug_v26_6_2_pv_train050_val000"
 export DATASET_ID="032"
 export NNUNET_NUM_EPOCHS=2000

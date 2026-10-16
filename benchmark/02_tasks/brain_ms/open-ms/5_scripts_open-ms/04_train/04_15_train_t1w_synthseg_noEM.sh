@@ -12,9 +12,7 @@ source "$(dirname "$0")/../00_utils/env_t1w.sh"
 METHOD="synthseg_noEM_train100_val000"
 TRAINER="nnUNetTrainerOpenMSAugLabDefault"
 DATASET_ID="071"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_open-ms_t1w_synthseg_noEM"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

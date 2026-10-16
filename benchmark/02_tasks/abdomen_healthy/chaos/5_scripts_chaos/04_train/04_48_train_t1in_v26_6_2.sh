@@ -20,9 +20,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerCHAOSAugLabDualVal"
 DATASET_ID="060"
-DA_WORKERS="${DA_WORKERS:-0}"
 LOG_DIR="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/_logs/nnunet_chaos_t1in_v26_6_2_train050_val000"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

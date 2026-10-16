@@ -5,9 +5,7 @@ source "$(dirname "$0")/../00_utils/env_flair.sh"
 METHOD="auglab_default"
 TRAINER="nnUNetTrainerISLES2022AugLabDefault"
 DATASET_ID="${DATASET_ID_FLAIR}"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_isles2022_flair_auglab_default"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

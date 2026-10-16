@@ -16,6 +16,7 @@ source "$(dirname "$0")/../00_utils/env_t2f.sh"
 METHOD="baseline_kmeans_label_remap_voronoi_lblvor"
 TRAINER="nnUNetTrainerBraTS2024GliomaT2fAugLabDefault"
 DATASET_ID="053"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: historical setting of the runs already trained with this wrapper (loader settings change speed, not the method)
 DA_WORKERS=8
 LOG_DIR="/tmp/nnunet_brats2024_t2f_baseline_kmeans_label_remap_voronoi_lblvor"
 export nnUNet_compile=1

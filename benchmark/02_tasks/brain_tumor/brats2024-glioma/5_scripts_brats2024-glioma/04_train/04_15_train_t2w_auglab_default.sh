@@ -10,9 +10,7 @@ source "$(dirname "$0")/../00_utils/env_t2w.sh"
 METHOD="auglab_default"
 TRAINER="nnUNetTrainerBraTS2024GliomaT2wAugLabDefault"
 DATASET_ID="052"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_brats2024_t2w_auglab_default"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2500}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

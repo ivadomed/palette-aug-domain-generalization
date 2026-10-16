@@ -10,7 +10,6 @@
 source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAug_v26_6_2_noisefill_train025_val100"
 TRAINER="nnUNetTrainerOnHarmonyAugLabValSynth"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_on-harmony_t1w_auglabAug_v26_6_2_noisefill_train025_val100"
 export NNUNET_NUM_EPOCHS=2000
 

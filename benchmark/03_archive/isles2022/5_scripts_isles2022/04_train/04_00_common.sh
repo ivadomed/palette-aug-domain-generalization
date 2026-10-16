@@ -13,4 +13,10 @@ DATASET_ID_DEFAULT="${DATASET_ID_DWI}"   # real wrappers always pass DATASET_ID 
 # 3D volumes ~112x112x73): re-time on a TamIA sizing probe before trusting RUN_JOB_TIME_DEFAULT / pack chain length.
 NNUNET_NUM_EPOCHS_DEFAULT="2000"
 
-source "${PROJECT_ROOT}/benchmark/00_commun_scripts/00_01_train/train_common.sh" "$@"
+# DATA LOADER (one value for EVERY method of this dataset, the headline competitors' setting): per-method wrappers
+# must not set DA_WORKERS / nnUNet_compile; train_common.sh refuses a different value unless ALLOW_METHOD_LOADER_OVERRIDE=1.
+DA_WORKERS_DEFAULT="8"
+NNUNET_COMPILE_DEFAULT="1"
+
+# TRAIN_COMMON_SH: test a candidate copy of the shared driver (default: the repo copy).
+source "${TRAIN_COMMON_SH:-${PROJECT_ROOT}/benchmark/00_commun_scripts/00_01_train/train_common.sh}" "$@"

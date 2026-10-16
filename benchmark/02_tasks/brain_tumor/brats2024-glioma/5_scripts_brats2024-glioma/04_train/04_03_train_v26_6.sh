@@ -8,6 +8,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="v26_6_train090_val100"
 TRAINER="nnUNetTrainerBraTS2024GliomaV26_6"
 DATASET_ID="051"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: historical setting of the runs already trained with this wrapper (loader settings change speed, not the method)
 DA_WORKERS=8
 LOG_DIR="/tmp/nnunet_brats2024_v26_6"
 export nnUNet_compile=1

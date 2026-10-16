@@ -17,9 +17,7 @@ source "$(dirname "$0")/../00_utils/env_t1c.sh"
 METHOD="srcsm"
 TRAINER="nnUNetTrainerBraTS2024GliomaT1cAugLabDefault"
 DATASET_ID="054"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_brats2024_t1c_srcsm"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2500}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

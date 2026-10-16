@@ -11,9 +11,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="baseline"
 TRAINER="nnUNetTrainerOpenMSBaseline"
 DATASET_ID="070"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_open-ms_baseline"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 # baseline is an nnUNet-category method → uses env.sh's nnUNet_results default

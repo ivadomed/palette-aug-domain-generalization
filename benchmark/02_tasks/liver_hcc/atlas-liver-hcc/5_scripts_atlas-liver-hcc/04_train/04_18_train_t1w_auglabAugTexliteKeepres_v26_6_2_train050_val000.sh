@@ -12,9 +12,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAugTexliteKeepres_v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerAtlasLiverHCCAugLabDefault"
 DATASET_ID="080"
-DA_WORKERS=0
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_atlas-liver-hcc_auglabAugTexliteKeepres_v26_6_2_train050_val000"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

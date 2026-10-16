@@ -9,9 +9,7 @@ source "$(dirname "$0")/../00_utils/env_t2w.sh"
 METHOD="baseline_kmeans_label_remap_voronoi_lblvor"
 TRAINER="nnUNetTrainerPANSEGDATAAugLabDefault"
 DATASET_ID="${DATASET_ID_T2W}"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_pansegdata_t2w_baseline_kmeans_label_remap_voronoi_lblvor"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

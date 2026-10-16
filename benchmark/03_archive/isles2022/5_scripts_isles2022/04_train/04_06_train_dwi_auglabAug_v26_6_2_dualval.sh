@@ -15,9 +15,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAug_v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerISLES2022AugLabDualVal"
 DATASET_ID="${DATASET_ID_DWI}"
-DA_WORKERS=0
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_isles2022_dwi_auglabAug_v26_6_2_train050_dualval"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

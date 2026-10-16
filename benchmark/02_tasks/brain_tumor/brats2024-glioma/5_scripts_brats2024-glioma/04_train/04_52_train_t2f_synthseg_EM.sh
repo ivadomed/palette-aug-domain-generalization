@@ -12,9 +12,7 @@ source "$(dirname "$0")/../00_utils/env_t2f.sh"
 METHOD="synthseg_EM"
 TRAINER="nnUNetTrainerBraTS2024GliomaT2fAugLabDefault"
 DATASET_ID="053"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_brats2024_t2f_synthseg_EM"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2500}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

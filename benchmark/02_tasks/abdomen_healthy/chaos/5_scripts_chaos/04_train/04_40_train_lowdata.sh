@@ -23,7 +23,6 @@ N="${2:?N required (e.g. 1 2 4 8 12)}"
 RESUME_RUN_ID="${3:-}"
 
 DATASET_ID="060"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"    # CHAOS standard, fixed across all regimes
 AUGLAB_CONFIGS_DIR="${PROJECT_ROOT}/sub-workspaces/auglab_workspace/AugLab/auglab/configs"
 
@@ -32,11 +31,11 @@ case "${METHOD_KEY}" in
     METHOD="baseline"
     TRAINER="nnUNetTrainerCHAOSBaselineLowData"
     DA_WORKERS="${DA_WORKERS:-16}"
+    ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: nnU-Net's own CPU augmentation runs in the DA workers
     ;;
   v26_6_2)
     METHOD="v26_6_2_train050_val100"
     TRAINER="nnUNetTrainerCHAOSV26_6_2_p50LowData"
-    DA_WORKERS="${DA_WORKERS:-0}"
     # v26_6_2 now runs the AugLab GPU contrast transform (synth + spatial DA, no other
     # AugLab augs); the trainer requires both configs. Results stay in nnUNet/ category
     # (no NNUNET_RESULTS_BASE override), matching prior v26_6_2 runs.
@@ -46,28 +45,24 @@ case "${METHOD_KEY}" in
   auglab_default)
     METHOD="auglab_default"
     TRAINER="nnUNetTrainerCHAOSAugLabDefaultLowData"
-    DA_WORKERS="${DA_WORKERS:-0}"
     export AUGLAB_PARAMS_GPU_JSON="${AUGLAB_CONFIGS_DIR}/transform_params_gpu_default01-23.json"
     export NNUNET_RESULTS_BASE="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab"
     ;;
   synthseg_EM)
     METHOD="synthseg_EM"
     TRAINER="nnUNetTrainerCHAOSAugLabDefaultLowData"
-    DA_WORKERS="${DA_WORKERS:-0}"
     export AUGLAB_PARAMS_GPU_JSON="${AUGLAB_CONFIGS_DIR}/transform_params_gpu_default01-23_Synthseg_EM.json"
     export NNUNET_RESULTS_BASE="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab"
     ;;
   synthseg_noEM)
     METHOD="synthseg_noEM"
     TRAINER="nnUNetTrainerCHAOSAugLabDefaultLowData"
-    DA_WORKERS="${DA_WORKERS:-0}"
     export AUGLAB_PARAMS_GPU_JSON="${AUGLAB_CONFIGS_DIR}/transform_params_gpu_default01-23_Synthseg.json"
     export NNUNET_RESULTS_BASE="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab"
     ;;
   auglabAug_v26_6_2)
     METHOD="auglabAug_v26_6_2_train025_val100"
     TRAINER="nnUNetTrainerCHAOSAugLabValSynthLowData"
-    DA_WORKERS="${DA_WORKERS:-0}"
     export AUGLAB_PARAMS_GPU_JSON="${AUGLAB_CONFIGS_DIR}/transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train025.json"
     export AUGLAB_VAL_PARAMS_GPU_JSON="${AUGLAB_CONFIGS_DIR}/transform_params_gpu_VALsynthonly_ImageContrastV26_6_2GPUTransform.json"
     export NNUNET_RESULTS_BASE="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab"

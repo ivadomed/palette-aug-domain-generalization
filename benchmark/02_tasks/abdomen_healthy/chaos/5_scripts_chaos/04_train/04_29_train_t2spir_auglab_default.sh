@@ -10,9 +10,7 @@ source "$(dirname "$0")/../00_utils/env_t2spir.sh"
 METHOD="auglab_default"
 TRAINER="nnUNetTrainerCHAOSAugLabDefault"
 DATASET_ID="061"
-DA_WORKERS="${DA_WORKERS:-0}"
 LOG_DIR="/tmp/nnunet_chaos_t2spir_auglab_default"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

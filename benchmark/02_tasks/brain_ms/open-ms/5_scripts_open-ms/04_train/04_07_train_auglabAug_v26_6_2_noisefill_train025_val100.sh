@@ -13,9 +13,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAug_v26_6_2_noisefill_train025_val100"
 TRAINER="nnUNetTrainerOpenMSAugLabValSynth"
 DATASET_ID="070"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_open-ms_auglabAug_v26_6_2_noisefill_train025_val100"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

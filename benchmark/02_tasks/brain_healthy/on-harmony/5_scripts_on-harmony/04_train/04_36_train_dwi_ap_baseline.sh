@@ -4,6 +4,7 @@
 source "$(dirname "$0")/../00_utils/env_dwi.sh"
 METHOD="baseline"
 TRAINER="nnUNetTrainerOnHarmonyBaseline"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: nnU-Net's own CPU augmentation runs in the DA workers (baseline needs more of them)
 DA_WORKERS=16
 LOG_DIR="/tmp/nnunet_on-harmony_dwi_ap_baseline"
 export DATASET_ID="033"

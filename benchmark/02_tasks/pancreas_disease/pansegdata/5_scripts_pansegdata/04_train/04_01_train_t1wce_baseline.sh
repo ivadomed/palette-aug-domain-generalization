@@ -14,9 +14,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="baseline"
 TRAINER="nnUNetTrainerPANSEGDATABaseline"
 DATASET_ID="${DATASET_ID_T1WCE}"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_pansegdata_t1wce_baseline"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2000}"
 
 # baseline is an nnUNet-category method -> uses env.sh's nnUNet_results default

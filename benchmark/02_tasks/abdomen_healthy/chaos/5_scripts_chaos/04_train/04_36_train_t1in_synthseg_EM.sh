@@ -11,9 +11,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="synthseg_EM"
 TRAINER="nnUNetTrainerCHAOSAugLabDefault"
 DATASET_ID="060"
-DA_WORKERS="${DA_WORKERS:-0}"
 LOG_DIR="/tmp/nnunet_chaos_t1in_synthseg_EM"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-2500}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

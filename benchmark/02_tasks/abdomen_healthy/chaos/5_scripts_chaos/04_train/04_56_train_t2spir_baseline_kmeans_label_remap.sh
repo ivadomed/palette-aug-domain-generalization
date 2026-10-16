@@ -17,9 +17,7 @@ source "$(dirname "$0")/../00_utils/env_t2spir.sh"
 METHOD="baseline_kmeans_label_remap_train050_val000"
 TRAINER="nnUNetTrainerCHAOSAugLabDualVal"
 DATASET_ID="061"
-DA_WORKERS="${DA_WORKERS:-0}"
 LOG_DIR="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/_logs/nnunet_chaos_t2spir_baseline_kmeans_label_remap_train050_val000"
-export nnUNet_compile=0
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-200}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"

@@ -15,7 +15,6 @@
 source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="v26_6_2_train050_val000"
 TRAINER="nnUNetTrainerOnHarmonyAugLabDefault"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_on-harmony_t1w_v26_6_2_train050_val000"
 export NNUNET_NUM_EPOCHS=2000
 

@@ -12,6 +12,7 @@ source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglab_default_valaug"
 TRAINER="nnUNetTrainerBraTS2024GliomaAugLabDefaultValAug"
 DATASET_ID="051"
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: historical setting of the runs already trained with this wrapper (loader settings change speed, not the method)
 DA_WORKERS=8
 LOG_DIR="/tmp/nnunet_brats2024_auglab_default_valaug"
 export nnUNet_compile=1

@@ -14,8 +14,8 @@
 #   * optionally set: NNUNET_ITERS_PER_EPOCH_DEFAULT  (chaos: 150; unset → the export
 #            is omitted entirely, so the trainer keeps nnU-Net's built-in default)
 #
-# Method wrapper sets (as before): METHOD, TRAINER, DA_WORKERS, LOG_DIR, and may set
-#   NNUNET_RESULTS_BASE, GPUS_PER_FOLD, NNUNET_NUM_EPOCHS, nnUNet_compile, RUN_ID ($1),
+# Method wrapper sets: METHOD, TRAINER, LOG_DIR, and may set (NOT DA_WORKERS / nnUNet_compile: per dataset, see below)
+#   NNUNET_RESULTS_BASE, GPUS_PER_FOLD, NNUNET_NUM_EPOCHS, RUN_ID ($1),
 #   SINGLE_FOLD/SINGLE_SLOT/SINGLE_GPU, FOLD_SLOT_GPU, RESUME_WANDB_IDS, LAUNCH_WAIT.
 #
 # Each fold is launched through run_job() (scripts/job_runner/run_job.sh, sourced
@@ -54,6 +54,38 @@ DATASET_ID="${DATASET_ID:-${DATASET_ID_DEFAULT}}"
 _DS_NAME="$(ls "${nnUNet_raw}" | grep "^Dataset0*${DATASET_ID}_" | head -1)"
 TRAINER_DIR="${_DS_NAME}/${TRAINER}__nnUNetPlans__3d_fullres"
 GPUS_PER_FOLD="${GPUS_PER_FOLD:-1}"
+
+# ── DATA LOADER: one setting per DATASET, never per method (2026-10-16) ───────────────────────────────
+# nnUNet_n_proc_DA (= DA_WORKERS) and nnUNet_compile change the time per epoch, not the method. They used to be set in
+# every per-method wrapper, and they drifted: the headline OURS DualVal wrappers of ispy2 / toothfairy2 / totalseg-pelvic /
+# atlas-liver-hcc / pansegdata ran 0 workers + no compile while their competitors ran 8 + compile (cloned from the brats
+# DualVal template via the ispy2 scaffold and the isles2022 reference), which made OURS ~3x slower per epoch for no reason
+# (latency probe 2026-10-15). Now the dataset shim (04_00_common.sh) sets DA_WORKERS_DEFAULT / NNUNET_COMPILE_DEFAULT,
+# wrappers set nothing, and any different value (from a wrapper or the caller's environment) is REFUSED unless
+# ALLOW_METHOD_LOADER_OVERRIDE=1 (a deliberate override, printed as a warning). BLOSC2/BLOSC threads stay capped at 1 per
+# worker in the fold command below, for every dataset, so 8+ workers cannot exhaust the job's thread limit.
+# benchmark/validate_standard_dataset_structure.py flags any 04_XX wrapper that sets these without the override flag.
+if [ -z "${DA_WORKERS_DEFAULT:-}" ] || [ -z "${NNUNET_COMPILE_DEFAULT:-}" ]; then
+    echo "ERROR: ${DATASET_NAME:-?} 04_train/04_00_common.sh must set DA_WORKERS_DEFAULT and NNUNET_COMPILE_DEFAULT" \
+         "(one data-loader setting per dataset, see train_common.sh)" >&2
+    exit 1
+fi
+DA_WORKERS="${DA_WORKERS:-${DA_WORKERS_DEFAULT}}"
+nnUNet_compile="${nnUNet_compile:-${NNUNET_COMPILE_DEFAULT}}"
+_LOADER_OVERRIDE="no"
+if [ "${DA_WORKERS}" != "${DA_WORKERS_DEFAULT}" ] || [ "${nnUNet_compile}" != "${NNUNET_COMPILE_DEFAULT}" ]; then
+    if [ "${ALLOW_METHOD_LOADER_OVERRIDE:-0}" != "1" ]; then
+        echo "ERROR: ${METHOD} sets DA_WORKERS=${DA_WORKERS} nnUNet_compile=${nnUNet_compile} but the ${DATASET_NAME} default is" \
+             "DA_WORKERS=${DA_WORKERS_DEFAULT} nnUNet_compile=${NNUNET_COMPILE_DEFAULT} (04_00_common.sh). Refusing to launch:" \
+             "remove the per-method setting, or export ALLOW_METHOD_LOADER_OVERRIDE=1 for a deliberate override." >&2
+        exit 1
+    fi
+    _LOADER_OVERRIDE="yes"
+    echo "WARNING: ${METHOD}: data-loader OVERRIDE (ALLOW_METHOD_LOADER_OVERRIDE=1): DA_WORKERS=${DA_WORKERS}" \
+         "nnUNet_compile=${nnUNet_compile} vs ${DATASET_NAME} default ${DA_WORKERS_DEFAULT}/${NNUNET_COMPILE_DEFAULT}" >&2
+fi
+_LOADER_TAG="dataset=${DATASET_NAME} method=${METHOD} default=${DA_WORKERS_DEFAULT}/${NNUNET_COMPILE_DEFAULT} override=${_LOADER_OVERRIDE}"
+echo "[loader] nnUNet_n_proc_DA=${DA_WORKERS} nnUNet_compile=${nnUNet_compile} ${_LOADER_TAG}"
 
 RUN_ID="${1:-${DATASET_NAME}_${TRAINING_CONTRAST}_${METHOD}_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "$LOG_DIR"
@@ -169,7 +201,8 @@ launch_fold() {
         export OMP_WAIT_POLICY=passive
         export NNUNET_NUM_EPOCHS='${NNUNET_NUM_EPOCHS:-${NNUNET_NUM_EPOCHS_DEFAULT}}'
         ${_iters_export}
-        export nnUNet_compile='${nnUNet_compile:-0}'
+        export nnUNet_compile='${nnUNet_compile}'
+        echo \"[loader] nnUNet_n_proc_DA=\${nnUNet_n_proc_DA} nnUNet_compile=\${nnUNet_compile} BLOSC2_NTHREADS=\${BLOSC2_NTHREADS} BLOSC_NTHREADS=\${BLOSC_NTHREADS} OMP_NUM_THREADS=\${OMP_NUM_THREADS} ${_LOADER_TAG}\"
         cd '${PROJECT_ROOT}'
         ${_resume_prelude}
         .venv/bin/nnUNetv2_train ${DATASET_ID} 3d_fullres ${FOLD} ${_cflag} \

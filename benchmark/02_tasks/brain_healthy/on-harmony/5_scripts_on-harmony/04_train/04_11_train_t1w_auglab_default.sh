@@ -5,7 +5,6 @@
 source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglab_default"
 TRAINER="nnUNetTrainerOnHarmonyAugLabDefault"
-DA_WORKERS=0
 LOG_DIR="/tmp/nnunet_on-harmony_t1w_auglab_default"
 export NNUNET_NUM_EPOCHS=2000
 

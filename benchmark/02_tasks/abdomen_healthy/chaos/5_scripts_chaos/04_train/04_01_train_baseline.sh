@@ -7,6 +7,7 @@ METHOD="baseline"
 TRAINER="nnUNetTrainerCHAOSBaseline"
 DATASET_ID="060"
 # 4 folds run concurrently (2 per GPU) sharing 64 CPUs → 16 DA workers/fold.
+ALLOW_METHOD_LOADER_OVERRIDE=1   # deliberate per-method loader override: nnU-Net's own CPU augmentation runs in the DA workers (baseline needs more of them)
 DA_WORKERS="${DA_WORKERS:-16}"
 LOG_DIR="/tmp/nnunet_chaos_baseline"
 source "$(dirname "$0")/04_00_common.sh" "$@"

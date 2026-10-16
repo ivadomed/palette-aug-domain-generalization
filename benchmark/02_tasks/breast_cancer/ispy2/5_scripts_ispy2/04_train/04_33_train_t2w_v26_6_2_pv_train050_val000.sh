@@ -12,9 +12,7 @@ source "$(dirname "$0")/../00_utils/env_t2w.sh"
 METHOD="v26_6_2_pv_train050_val000"
 TRAINER="nnUNetTrainerISPY2AugLabDefault"
 DATASET_ID="${DATASET_ID_T2W}"
-DA_WORKERS=8
 LOG_DIR="${RESULTS_DIR}/_logs/nnunet_ispy2_t2w_v26_6_2_pv_train050_val000"
-export nnUNet_compile=1
 export NNUNET_NUM_EPOCHS="${NNUNET_NUM_EPOCHS:-1000}"
 
 AUGLAB_CONFIGS_DIR="$(cd "$(dirname "$0")/../../../../../../sub-workspaces/auglab_workspace/AugLab/auglab/configs" && pwd)"
