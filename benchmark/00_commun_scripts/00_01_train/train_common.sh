@@ -86,6 +86,14 @@ if [ "${DA_WORKERS}" != "${DA_WORKERS_DEFAULT}" ] || [ "${nnUNet_compile}" != "$
 fi
 _LOADER_TAG="dataset=${DATASET_NAME} method=${METHOD} default=${DA_WORKERS_DEFAULT}/${NNUNET_COMPILE_DEFAULT} override=${_LOADER_OVERRIDE}"
 echo "[loader] nnUNet_n_proc_DA=${DA_WORKERS} nnUNet_compile=${nnUNet_compile} ${_LOADER_TAG}"
+# Code provenance (skill git-workflow, "Clusters"): the commits this launch runs, logged at submit time
+# and in every fold log. *_dirty = modified tracked files (a non-zero count means the run is not
+# reproducible from the commit alone).
+_code_rev() { git -C "$1" rev-parse --short=12 HEAD 2>/dev/null || echo none; }
+_code_dirty() { git -C "$1" status --porcelain --untracked-files=no 2>/dev/null | wc -l; }
+_AUGLAB_DIR="${PROJECT_ROOT}/sub-workspaces/auglab_workspace/AugLab"
+_CODE_TAG="main=$(_code_rev "${PROJECT_ROOT}") main_dirty=$(_code_dirty "${PROJECT_ROOT}") auglab=$(_code_rev "${_AUGLAB_DIR}") auglab_dirty=$(_code_dirty "${_AUGLAB_DIR}")"
+echo "[code] ${_CODE_TAG}"
 
 RUN_ID="${1:-${DATASET_NAME}_${TRAINING_CONTRAST}_${METHOD}_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "$LOG_DIR"
@@ -203,6 +211,7 @@ launch_fold() {
         ${_iters_export}
         export nnUNet_compile='${nnUNet_compile}'
         echo \"[loader] nnUNet_n_proc_DA=\${nnUNet_n_proc_DA} nnUNet_compile=\${nnUNet_compile} BLOSC2_NTHREADS=\${BLOSC2_NTHREADS} BLOSC_NTHREADS=\${BLOSC_NTHREADS} OMP_NUM_THREADS=\${OMP_NUM_THREADS} ${_LOADER_TAG}\"
+        echo \"[code] ${_CODE_TAG}\"
         cd '${PROJECT_ROOT}'
         ${_resume_prelude}
         .venv/bin/nnUNetv2_train ${DATASET_ID} 3d_fullres ${FOLD} ${_cflag} \
