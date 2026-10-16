@@ -43,7 +43,9 @@ def pa_alone(mdir):
                 continue
             if "auglabAug" in rid or "_pv_" in rid or rid.endswith(("_final", "_srcmatch")):
                 continue
-            hits.append(sub + rid)
+            # keep the category prefix: aggregate_from_config resolves "<prefix><key>" with prefixes nnUNet_/auglab_/"" on the
+            # WHOLE key, so "ablations/<run>" never resolves ("auglab_ablations/..."), "ablations/<cat>_<run>" does (exact)
+            hits.append(sub + (Path(p).name if sub else rid))
     return sorted(hits)[-1] if hits else None
 
 

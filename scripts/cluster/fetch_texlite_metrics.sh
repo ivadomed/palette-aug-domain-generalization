@@ -25,7 +25,10 @@ ROWS=(
 "open-ms/8_results_open-ms/02_metrics/open_ms_model/flair|brain_ms/open-ms/8_results_open-ms/02_metrics/open_ms_model/flair"
 "chaos/8_results_chaos/02_metrics/chaos_model/t2spir|abdomen_healthy/chaos/8_results_chaos/02_metrics/chaos_model/t2spir"
 )
+# FETCH_ONLY=<regex> (optional): only the rows whose Vulcan destination matches (e.g. FETCH_ONLY='open-ms|chaos' while the
+# on-harmony run is still training)
 for r in "${ROWS[@]}"; do IFS='|' read -r src dst <<<"$r"
+  [ -z "${FETCH_ONLY:-}" ] || [[ "${dst}" =~ ${FETCH_ONLY} ]] || continue
   if [ "${src}" = VULCAN ]; then
     run="$(cd "${T}/${dst}" && ls -d ${PAT} 2>/dev/null)"
     [ "$(echo "${run}" | grep -c .)" = 1 ] || { echo "[fetch] expected exactly 1 local (Vulcan) run in ${dst}, got: ${run}"; exit 1; }
