@@ -50,7 +50,7 @@ case "${ekind}" in
   brats:*)   # in-process, folds sequential (3 folds x 4 contrasts at once OOM-killed a 64G job before)
     rung6_eval_pre_env "${ekind}"; envsetup; export DATASET_ID="${ekind#brats:}" EVAL_INLINE=1 CATEGORY="${RUNG_CAT}" METRICS_SUBDIR="${RUNG_MSUB}"
     for F in 0 1 2; do bash "$S/06_01_evaluate_run.sh" "${run}" "${F}" || rc=1; done ;;
-  onh)       # WORKER mode, one fold at a time (default CHECKPOINT=checkpoint_final, as for its rung 5)
+  onh|onh_best)   # WORKER mode, one fold at a time (06_01_evaluate_testset.sh's CHECKPOINT default: checkpoint_best since 2026-10-06)
     envsetup
     for F in 0 1 2; do bash "$S/06_01_evaluate_testset.sh" "${run}" "${F}" || rc=1; done ;;
   chaos:*)   # DATASET_ID explicit: the non-primary contrast scores against the wrong GT otherwise

@@ -9,3 +9,5 @@ Full result, diagnostics and the lesson: the project notes, section "Stroke task
 - **License:** the zip's LICENSE forbids redistribution without the ISLES'22 team's written agreement: no git-annex, no public figures of these images.
 - Contents: BIDS (all 3 contrasts, ADC under `derivatives/adc`), nnU-Net raw/preprocessed (Dataset140 DWI, Dataset141 FLAIR), splits (47 test / 199 pool, 3 folds), `5_scripts_isles2022/`, results (`8_results_isles2022/`: metrics, pins, predictions, best+final checkpoints of all 60 folds, `diag_case_level.md`).
 - The ADC positive-control outputs live only on TamIA scratch (`$SCRATCH/isles2022/_diag_adc`); numbers are in the project notes.
+
+2026-10-15: the TamIA scratch copy ($SCRATCH/isles2022) was deleted to free quota. Files that existed only there (DualVal checkpoint_best_val100.pth x6, training metadata/wandb logs, _diag_adc ADC-control predictions+metrics, _probe, _packruns logs; 3180 files, 4.3 GiB) are kept in tamia_scratch_extras_20261015.tar in this directory (paths relative to the old $SCRATCH/isles2022: 2_nnUNet/, 8_results/, _diag_adc/, ...). Everything else was a size-identical copy of this directory.
