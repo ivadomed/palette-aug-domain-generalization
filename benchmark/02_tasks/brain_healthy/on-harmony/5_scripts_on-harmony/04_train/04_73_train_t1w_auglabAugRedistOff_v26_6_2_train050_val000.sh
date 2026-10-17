@@ -6,6 +6,7 @@
 
 source "$(dirname "$0")/../00_utils/env.sh"
 METHOD="auglabAugRedistOff_v26_6_2_train050_val000"
+export ALLOW_METHOD_LOADER_OVERRIDE=1 DA_WORKERS=8 nnUNet_compile=1   # round 3: 8 workers + compile in every arm (dataset default 0/0 kept for round 2)
 TRAINER="nnUNetTrainerOnHarmonyAugLabDefault"
 LOG_DIR="/tmp/nnunet_on-harmony_t1w_auglabAugRedistOff_v26_6_2_train050_val000"
 export NNUNET_NUM_EPOCHS=2000

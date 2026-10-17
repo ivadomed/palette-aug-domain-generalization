@@ -7,16 +7,18 @@ val000 run with all its folds + the same headline run restricted to the table's 
   vs_<arm>/         sig_ref = that arm, all contrasts: the control row's p-value = one-sided "arm better than control"
   vs_<arm>_ho/      same, held-out contrasts only
 Arms = the run table's `arm` column (round 2: ctrl p075 edge2x alphawide; round 1 re-read: ctrl texlite keepres edgeonly;
-round 3: ctrl + the weakening arms). The control row (`ctrl`) is required.
+round 3: ctrl81 + the weakening arms + round 2's ctrl). The reference arm is PA_REF_ARM (env, default `ctrl`; round 3 = `ctrl81`,
+its own control at the same loader / seed) and is required; every vs_ctrl* name below means vs_<PA_REF_ARM>.
 Each arm row is restricted to the table's folds (a round-1 arm evaluated on folds 0-2 enters a fold-0 table with fold 0 only).
 usage: python write_configs.py <run_ids.tsv> <out root> [<title prefix>]   (run_ids.tsv: setting, fold, run_id, pack, arm)"""
-import collections, csv, sys
+import collections, csv, os, sys
 from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 T = ROOT / "benchmark/02_tasks"
 REF = "auglabAug_v26_6_2_train050_val000"
+REFARM = os.environ.get("PA_REF_ARM", "ctrl")
 S = {  # setting -> (dataset dir, headline config, metrics subdir, label)
     "onh_t1w": ("brain_healthy/on-harmony", "on-harmony_T1w.yaml", "on_harmony_model/T1w", "Brain (on-harmony T1w)"),
     "openms_flair": ("brain_ms/open-ms", "open-ms_flair_01_results.yaml", "open_ms_model/flair", "MS (open-ms FLAIR)"),
@@ -48,7 +50,7 @@ def main():
         assert rid[s].get(a, r) == r, (s, a); rid[s][a] = r; folds[s].add(int(f))
         if a not in arms:
             arms.append(a)
-    arms = ["ctrl"] + [a for a in arms if a != "ctrl"]
+    arms = [REFARM] + [a for a in arms if a != REFARM]
     for s, (ds, hcfg, sub, label) in S.items():
         if s not in rid:
             print(f"[skip] {s}"); continue
@@ -71,11 +73,11 @@ def main():
                 if miss:
                     print(f"[warn] {s} {a}: {r} has no eval_all.csv for folds {miss} -- row dropped"); continue
                 restricted(L, f"auglab_{r}", d, fl); runs.append(r)
-        if rid[s].get("ctrl") not in runs:
-            print(f"[skip] {s}: control not evaluated yet"); continue
+        if rid[s].get(REFARM) not in runs:
+            print(f"[skip] {s}: control {REFARM} not evaluated yet"); continue
         ind = cfg0.get("in_domain_contrast")
         contrasts = sorted({row["group"] for k in fl
-                            for row in csv.DictReader(open(real / f"auglab_{rid[s]['ctrl']}" / f"fold{k}" / "eval_all.csv"))})
+                            for row in csv.DictReader(open(real / f"auglab_{rid[s][REFARM]}" / f"fold{k}" / "eval_all.csv"))})
         held = [c for c in contrasts if c != ind]
         assert ind in contrasts and held, (s, ind, contrasts)
         for refarm in [a for a in arms if rid[s].get(a) in runs]:

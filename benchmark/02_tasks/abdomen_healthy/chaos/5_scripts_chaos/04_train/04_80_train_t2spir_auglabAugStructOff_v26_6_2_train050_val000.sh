@@ -7,6 +7,7 @@
 source "$(dirname "$0")/../00_utils/env_t2spir.sh"
 
 METHOD="auglabAugStructOff_v26_6_2_train050_val000"
+export ALLOW_METHOD_LOADER_OVERRIDE=1 DA_WORKERS=8 nnUNet_compile=1   # round 3: 8 workers + compile in every arm (dataset default 0/0 kept for round 2)
 TRAINER="nnUNetTrainerCHAOSAugLabV26_6_2"
 DATASET_ID="061"
 LOG_DIR="/tmp/nnunet_chaos_t2spir_auglabAugStructOff_v26_6_2_train050_val000"

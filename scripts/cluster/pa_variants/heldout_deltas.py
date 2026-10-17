@@ -4,7 +4,7 @@ Per setting and arm: held-out Dice / HD95 (= `all` of vs_ctrl_ho, equal weight p
 p (ctrl better, from vs_ctrl_ho) and p (arm better, the ctrl row of vs_<arm>_ho), training-contrast Dice delta (vs_ctrl),
 then the mean over the settings present and the screen rules (rule 2: round-1 candidate; rule 3: extension).
 usage: python heldout_deltas.py <agg root> <run_ids.tsv>   -> prints + writes <agg root>/HELDOUT_DELTAS.md"""
-import collections, re, sys
+import collections, os, re, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "benchmark/00_commun_scripts/00_03_evaluate"))
 sys.path.insert(0, str(ROOT / "benchmark/00_commun_scripts/00_00_utils"))
 from aggregate_from_config import load_run, cross_fold_class_mean  # noqa: E402 -- same cell math as the tables
 
+REFARM = os.environ.get("PA_REF_ARM", "ctrl")   # the control the deltas are taken against (round 3: ctrl81)
 LABEL = {"onh_t1w": "Brain", "openms_flair": "MS", "chaos_t2spir": "Abdomen"}
 
 
@@ -39,23 +40,23 @@ def main():
     for l in tsv.read_text().splitlines()[1:]:
         if not l.strip() or l.startswith("#"): continue
         s, f, r, p, a = l.split("\t")[:5]; rid[s][a] = r
-        if a not in arms and a != "ctrl": arms.append(a)
-    lines = ["| setting | arm | held-out Dice | Δ | p ctrl>arm | p arm>ctrl | held-out HD95 | Δ mm | p ctrl>arm | p arm>ctrl | train Dice Δ |",
+        if a not in arms and a != REFARM: arms.append(a)
+    lines = [f"| setting | arm | held-out Dice | Δ vs {REFARM} | p ref>arm | p arm>ref | held-out HD95 | Δ mm | p ref>arm | p arm>ref | train Dice Δ |",
              "|---|---|---|---|---|---|---|---|---|---|---|"]
     D = collections.defaultdict(dict)
     for s in LABEL:
-        if s not in rid or not (agg / s / "vs_ctrl_ho/01_results_summary.md").is_file(): continue
-        c = rid[s]["ctrl"]
-        ho = {m: table(agg / s / "vs_ctrl_ho/01_results_summary.md", m) for m in ("Dice", "HD95 mm")}
+        if s not in rid or not (agg / s / f"vs_{REFARM}_ho/01_results_summary.md").is_file(): continue
+        c = rid[s][REFARM]
+        ho = {m: table(agg / s / f"vs_{REFARM}_ho/01_results_summary.md", m) for m in ("Dice", "HD95 mm")}
         held = [h for h in ho["Dice"][c] if h not in ("folds", "all", "sig. vs ref")]
         for run in ho["Dice"]:   # replace the rounded `all` cells by exact held-out means
             d = load_run(agg / s / "metrics" / f"auglab_{run}")
             if not d.get("dice"): continue
             ho["Dice"][run]["all"] = 100 * sum(cross_fold_class_mean(d, "dice", h) for h in held) / len(held)
             ho["HD95 mm"][run]["all"] = sum(cross_fold_class_mean(d, "hd95", h) for h in held) / len(held)
-        al = table(agg / s / "vs_ctrl/01_results_summary.md", "Dice")
+        al = table(agg / s / f"vs_{REFARM}/01_results_summary.md", "Dice")
         ind = [h for h in al[c] if h not in ("folds", "all", "sig. vs ref") and h not in ho["Dice"][c]][0]
-        lines.append(f"| {LABEL[s]} | ctrl | {ho['Dice'][c]['all']:.1f} | | | | {ho['HD95 mm'][c]['all']:.1f} | | | | ({ind} {al[c][ind]:.1f}) |")
+        lines.append(f"| {LABEL[s]} | {REFARM} (ref) | {ho['Dice'][c]['all']:.1f} | | | | {ho['HD95 mm'][c]['all']:.1f} | | | | ({ind} {al[c][ind]:.1f}) |")
         for a in arms:
             r = rid[s].get(a)
             if r not in ho["Dice"] or ho["Dice"][r]["all"] is None: continue

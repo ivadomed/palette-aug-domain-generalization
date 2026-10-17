@@ -14,9 +14,11 @@ Round 3 (2026-10-17, Auglab weakening; reference = round 2's ctrl, not regenerat
   redistoff  RedistributeSegTransform 0.4 -> 0                           METHOD auglabAugRedistOff_v26_6_2_train050_val000
   structoff  Scharr, RandomConv, UnsharpMask -> 0                        METHOD auglabAugStructOff_v26_6_2_train050_val000
   structoffredistoff  structoff + RedistributeSeg -> 0                   METHOD auglabAugStructOffRedistOff_v26_6_2_train050_val000
-  ctrlrep    headline config unchanged, NNUNET_SEED_OFFSET=500 (replicate of ctrl with another RNG stream: fold-0 seed noise)
-                                                                         METHOD auglabAugCtrlRep_v26_6_2_train050_val000
-  GaussianNoise / Blur / SimulateLowRes untouched in every arm. Configs defined but dropped before training (NGF gate, user
+  ctrl81     headline config unchanged = round 3's own control (same loader + seed as the other round-3 arms)
+                                                                         METHOD auglabAugCtrl81_v26_6_2_train050_val000
+  GaussianNoise / Blur / SimulateLowRes untouched in every arm. Every round-3 train wrapper runs 8 data-loader workers + torch
+  compile (user, 2026-10-17): open-ms's dataset default; on-harmony / chaos via the explicit train_common.sh override
+  (ALLOW_METHOD_LOADER_OVERRIDE=1), their dataset defaults (0/0) stay until round 2 ends. Configs defined but dropped before training (NGF gate, user
   2026-10-17): unsharpoff, edgehalf, texhalf (AugLab d623eef).
   (design: /scratch/paulh/review_20261017/weaken/DESIGN.md on Vulcan)
 No METHOD contains REF_SUBSTR (auglabAug_v26_6_2_train050_val000), so the headline run stays the default `sig. vs ref`; the round's
@@ -49,12 +51,14 @@ ARMS = {
                   "ScharrTransform, RandomConvTransform and UnsharpMaskTransform -> 0"),
     "structoffredistoff": (CFG.format("train050_structoff_redistoff"), "auglabAugStructOffRedistOff_v26_6_2_train050_val000",
                            "Scharr, RandomConv, UnsharpMask and RedistributeSeg -> 0"),
-    "ctrlrep": (OLDCFG, "auglabAugCtrlRep_v26_6_2_train050_val000",
-                "replicate of the control: headline config UNCHANGED, another RNG stream (NNUNET_SEED_OFFSET=500)"),
+    "ctrl81": (OLDCFG, "auglabAugCtrl81_v26_6_2_train050_val000",
+               "round-3 control: headline config UNCHANGED, 8 data-loader workers + compile like the other round-3 arms"),
 }
-ORDERS = {2: ["ctrl", "p075", "edge2x", "alphawide"], 3: ["redistoff", "structoff", "structoffredistoff", "ctrlrep"]}
-# extra lines put after METHOD= in an arm's TRAIN wrapper
-EXTRA = {"ctrlrep": "export NNUNET_SEED_OFFSET=500   # seed = 12345 + 1000*fold + 500 (src/nnunet/trainers/fast.py; ctrl used offset 0)"}
+ORDERS = {2: ["ctrl", "p075", "edge2x", "alphawide"], 3: ["redistoff", "structoff", "structoffredistoff", "ctrl81"]}
+# extra lines put after METHOD= in a round's TRAIN wrappers, per contrast tag
+LOADER81 = ("export ALLOW_METHOD_LOADER_OVERRIDE=1 DA_WORKERS=8 nnUNet_compile=1   "
+            "# round 3: 8 workers + compile in every arm (dataset default 0/0 kept for round 2)")
+EXTRA = {3: {"t1w": LOADER81, "t2spir": LOADER81}}
 O = "benchmark/02_tasks/brain_healthy/on-harmony/5_scripts_on-harmony"
 M = "benchmark/02_tasks/brain_ms/open-ms/5_scripts_open-ms"
 C = "benchmark/02_tasks/abdomen_healthy/chaos/5_scripts_chaos"
@@ -101,7 +105,7 @@ def sub1(s, pat, rep, what, count=1):
     return t
 
 
-def build(kind, d, src, dst, arm, trainer, rnd):
+def build(kind, d, src, dst, arm, trainer, rnd, tc):
     cfg, meth, desc = ARMS[arm]
     body = strip_header((ROOT / d / src).read_text())
     body = sub1(body, r'^METHOD="[^"]*"', f'METHOD="{meth}"', f"{dst} METHOD")
@@ -110,13 +114,13 @@ def build(kind, d, src, dst, arm, trainer, rnd):
     dv = f" (headline used a DualVal trainer; this uses {trainer})" if trainer else ""
     if kind == "train":
         body = sub1(body, re.escape(OLDCFG), cfg, f"{dst} config")
-        if arm in EXTRA:
-            body = sub1(body, r'^(METHOD="[^"]*")$', r'\1' + "\n" + EXTRA[arm], f"{dst} extra")
         if "AUGLAB_VAL_PARAMS_GPU_JSON" in body:
             body = sub1(body, r'^export AUGLAB_VAL_PARAMS_GPU_JSON=.*$', 'export AUGLAB_VAL_PARAMS_GPU_JSON=""', f"{dst} val json")
         body = re.sub(r'(LOG_DIR="[^"]*?)(auglabAug_v26_6_2_(?:train050_(?:dualval|val000)|dualval))', r'\g<1>' + meth, body)
         if "DA_WORKERS" in body or "NNUNET_COMPILE" in body:
             raise SystemExit(f"{src}: sets loader variables; the round must use the dataset defaults")
+        if tc in EXTRA.get(rnd, {}):
+            body = sub1(body, r'^(METHOD="[^"]*")$', r'\1' + "\n" + EXTRA[rnd][tc], f"{dst} extra")
         hdr = HDR_TRAIN.format(src=Path(src).name, dst=Path(dst).name, cfg=cfg, dv=dv, arm=arm, desc=desc, rnd=rnd)
     else:
         hdr = HDR_PRED.format(src=Path(src).name, dst=Path(dst).name, dv=dv, arm=arm, desc=desc, rnd=rnd)
@@ -129,15 +133,15 @@ def wrappers(rounds):
             for arm, num in zip(ORDERS[rnd], nums[rnd]):
                 verb = "train" if kind == "train" else "predict"
                 dst = f"{src.split('/')[0]}/{num}_{verb}_{tc}_{ARMS[arm][1]}.sh"
-                yield kind, d, src, dst, arm, trainer, rnd
+                yield kind, d, src, dst, arm, trainer, rnd, tc
 
 
 def main():
     check = "--check" in sys.argv
     rounds = [int(sys.argv[sys.argv.index("--round") + 1])] if "--round" in sys.argv else ([2, 3] if check else [2])
     bad = 0
-    for kind, d, src, dst, arm, trainer, rnd in wrappers(rounds):
-        out = build(kind, d, src, dst, arm, trainer, rnd)
+    for kind, d, src, dst, arm, trainer, rnd, tc in wrappers(rounds):
+        out = build(kind, d, src, dst, arm, trainer, rnd, tc)
         p = ROOT / d / dst
         if check:
             ok = p.exists() and p.read_text() == out
