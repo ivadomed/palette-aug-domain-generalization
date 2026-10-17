@@ -208,6 +208,7 @@ launch_fold() {
         export BLOSC_NTHREADS=${BLOSC_NTHREADS:-1}
         export OMP_WAIT_POLICY=passive
         export NNUNET_NUM_EPOCHS='${NNUNET_NUM_EPOCHS:-${NNUNET_NUM_EPOCHS_DEFAULT}}'
+        export NNUNET_SEED_OFFSET='${NNUNET_SEED_OFFSET:-0}'
         ${_iters_export}
         export nnUNet_compile='${nnUNet_compile}'
         echo \"[loader] nnUNet_n_proc_DA=\${nnUNet_n_proc_DA} nnUNet_compile=\${nnUNet_compile} BLOSC2_NTHREADS=\${BLOSC2_NTHREADS} BLOSC_NTHREADS=\${BLOSC_NTHREADS} OMP_NUM_THREADS=\${OMP_NUM_THREADS} ${_LOADER_TAG}\"
