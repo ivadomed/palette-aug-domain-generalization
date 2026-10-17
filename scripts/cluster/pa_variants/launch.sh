@@ -15,23 +15,39 @@
 # Packs (PACKS below; add a row for the fold 1-2 extension, then `record <pack>` + `submit <pack>` + `queue-post <pack>`):
 #   S0 = fold-0 screen: GPU g = on-harmony + open-ms + chaos of arm g (on-harmony ~60 s/epoch shared -> ~34 h = chain 2 x 24 h;
 #   open-ms ~10 h and chaos ~3 h finish inside chain job 1, so their post jobs wait on chain job 1 only).
+# PA_ROUND=3 (2026-10-17): round 3 = gentler Auglab weakening (unsharpoff, redistoff, edgehalf, texhalf; AugLab d623eef configs), same
+#   protocol; reference = round 2's ctrl (not retrained). Own state file / pack root / TS (TAG pa_variants_r3), pack R3S0 with the S0 layout.
+#   Every mode takes PA_ROUND=3 (record, submit, queue-post, status, runids); runs.sh resolves round-3 RUN_IDs from that root.
+#   Design: /scratch/paulh/review_20261017/weaken/DESIGN.md (Vulcan).
 set -euo pipefail
 cd /project/aip-jcohen/paulh/mri_synthesis_project
 export SCRATCH="${SCRATCH:-/scratch/${USER:0:1}/${USER}}"
-TAG=pa_variants
+PA_ROUND="${PA_ROUND:-2}"; export PA_ROUND
+TAG=pa_variants; [ "${PA_ROUND}" = 2 ] || TAG="pa_variants_r${PA_ROUND}"
 STATE="${SCRATCH}/_packruns_${TAG}_root${PROBE:+_probe}.txt"
 MODE="${1:?usage: record|submit|queue-post|probe-report|status|runids [PACK...]}"; shift
 T=benchmark/02_tasks
 O=$T/brain_healthy/on-harmony/5_scripts_on-harmony; M=$T/brain_ms/open-ms/5_scripts_open-ms; C=$T/abdomen_healthy/chaos/5_scripts_chaos
 declare -A METH=([ctrl]=auglabAugCtrl_v26_6_2_train050_val000 [p075]=auglabAugP075_v26_6_2_train075_val000
-                 [edge2x]=auglabAugEdge2x_v26_6_2_train050_val000 [alphawide]=auglabAugAlphaWide_v26_6_2_train050_val000)
+                 [edge2x]=auglabAugEdge2x_v26_6_2_train050_val000 [alphawide]=auglabAugAlphaWide_v26_6_2_train050_val000
+                 [unsharpoff]=auglabAugUnsharpOff_v26_6_2_train050_val000 [redistoff]=auglabAugRedistOff_v26_6_2_train050_val000
+                 [edgehalf]=auglabAugEdgeHalf_v26_6_2_train050_val000 [texhalf]=auglabAugTexHalf_v26_6_2_train050_val000)
 declare -A CFG=([ctrl]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050.json
                 [p075]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train075.json
                 [edge2x]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_edge2x.json
-                [alphawide]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_alphawide.json)
-# train wrapper numbers per setting, in arm order ctrl p075 edge2x alphawide
+                [alphawide]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_alphawide.json
+                [unsharpoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_unsharpoff.json
+                [redistoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_redistoff.json
+                [edgehalf]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_edgehalf.json
+                [texhalf]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_texhalf.json)
+# train wrapper numbers per setting, in arm order (round 2: ctrl p075 edge2x alphawide; round 3: unsharpoff redistoff edgehalf texhalf)
+if [ "${PA_ROUND}" = 3 ]; then
+declare -A NUM=([onh_t1w]="04_72 04_73 04_74 04_75" [openms_flair]="04_56 04_57 04_58 04_59" [chaos_t2spir]="04_76 04_77 04_78 04_79")
+ARMS_ORDER=(unsharpoff redistoff edgehalf texhalf)
+else
 declare -A NUM=([onh_t1w]="04_68 04_69 04_70 04_71" [openms_flair]="04_52 04_53 04_54 04_55" [chaos_t2spir]="04_72 04_73 04_74 04_75")
 ARMS_ORDER=(ctrl p075 edge2x alphawide)
+fi
 # setting | scripts dir | contrast tag in the wrapper name | tamia env | expected trainer | epochs
 SETTINGS=(
 "onh_t1w|$O|t1w|tamia_env_onharmony.sh|nnUNetTrainerOnHarmonyAugLabDefault|2000"
@@ -39,9 +55,11 @@ SETTINGS=(
 "chaos_t2spir|$C|t2spir|tamia_env_chaos.sh|nnUNetTrainerCHAOSAugLabV26_6_2|200"
 )
 # pack | "arm:setting:folds ..." (recording order) | PACK_GPU_MAP (one GPU per recorded fold) | chain length
-PACKS=(
+if [ "${PA_ROUND}" = 3 ]; then PACKS=(
+"R3S0|unsharpoff:onh_t1w:0 unsharpoff:openms_flair:0 unsharpoff:chaos_t2spir:0 redistoff:onh_t1w:0 redistoff:openms_flair:0 redistoff:chaos_t2spir:0 edgehalf:onh_t1w:0 edgehalf:openms_flair:0 edgehalf:chaos_t2spir:0 texhalf:onh_t1w:0 texhalf:openms_flair:0 texhalf:chaos_t2spir:0|0 0 0 1 1 1 2 2 2 3 3 3|2"
+); else PACKS=(
 "S0|ctrl:onh_t1w:0 ctrl:openms_flair:0 ctrl:chaos_t2spir:0 p075:onh_t1w:0 p075:openms_flair:0 p075:chaos_t2spir:0 edge2x:onh_t1w:0 edge2x:openms_flair:0 edge2x:chaos_t2spir:0 alphawide:onh_t1w:0 alphawide:openms_flair:0 alphawide:chaos_t2spir:0|0 0 0 1 1 1 2 2 2 3 3 3|2"
-)
+); fi
 [ -n "${PACK_LAYOUT_FILE:-}" ] && source "${PACK_LAYOUT_FILE}"
 if [ -n "${PROBE:-}" ]; then PACKS=("P_probe|${PACKS[0]#*|}"); PACKS=("${PACKS[0]%|*}|1"); fi
 ALL_PACKS="$(for p in "${PACKS[@]}"; do echo -n "${p%%|*} "; done)"
@@ -175,6 +193,8 @@ fi
 # RUNG_FOLDS = the pack's folds, PA_ARMS = the pack's arms) + one CPU eval job per row (tamia_rung6_pv_eval_job.sh).
 # Dependency: on-harmony waits for the LAST chain job; open-ms / chaos (done inside chain job 1) wait for chain job 1 only.
 # The predict job refuses to run unless every listed fold has checkpoint_best + checkpoint_final.
+# Eval jobs: 4 CPU / 32000 MB / 1 h by default (EVAL_CPUS / EVAL_MEM / EVAL_TIME): bigger CPU requests sat at Priority for days on
+# TamIA in round 2 (2026-10-16), and the fold-0 evaluations fit in this.
 if [ "${MODE}" = queue-post ]; then
     cpu_submit() { local out; if out="$(sbatch --parsable "$@" 2>/dev/null)"; then echo "${out}"; return 0; fi
                    echo "  (bare sbatch failed -- retrying with --partition=cpubase_bynode_b1)" >&2
@@ -197,14 +217,14 @@ if [ "${MODE}" = queue-post ]; then
             run="$(rung_resolve_run "$pack" "$prefix")" || { echo "UNRESOLVED ${name}"; exit 1; }
             [ -f "$T/${dir}/05_predict/${w}" ] || { echo "NO PREDICT WRAPPER ${dir}/05_predict/${w}"; exit 1; }
             echo "  [post] ${name}: ${run}"; done ) || { echo "[queue-post] ${p}/${s}: run table check FAILED -- not queued"; exit 1; }
-        EXP="ALL,ROSTER=scripts/cluster/pa_variants/runs.sh,PA_ARMS=${arms},RUNG_FOLDS=${folds},OUT=${OUT}"
+        EXP="ALL,ROSTER=scripts/cluster/pa_variants/runs.sh,PA_ROUND=${PA_ROUND},PA_ARMS=${arms},RUNG_FOLDS=${folds},OUT=${OUT}"
         PJ="$(sbatch --parsable --dependency=afterany:"${dep}" --job-name="${TAG}_predict_${p}_${s}" --time=03:00:00 \
               --output="${OUT}/predict_job_%j.out" --export="${EXP},PACK=${s}" scripts/cluster/tamia_rung6_pv_predict_job.sh)"
         echo "${PJ}" > "${OUT}/PREDICT_JOB"; echo "[queue-post] ${p}/${s}: predict job ${PJ} (after ${dep}; arms '${arms}', folds '${folds}')"
         : > "${OUT}/EVAL_JOBS"
         for a in ${arms}; do
-          EJ="$(cpu_submit --dependency=afterany:"${PJ}" --job-name="${TAG}_eval_${a}_${s}" --time=04:00:00 --cpus-per-task=16 \
-                --mem=96G --account=aip-jcohen --output="${OUT}/eval_${a}_%j.out" \
+          EJ="$(cpu_submit --dependency=afterany:"${PJ}" --job-name="${TAG}_eval_${a}_${s}" --time="${EVAL_TIME:-01:00:00}" --cpus-per-task="${EVAL_CPUS:-4}" \
+                --mem="${EVAL_MEM:-32000M}" --account=aip-jcohen --output="${OUT}/eval_${a}_%j.out" \
                 --export="${EXP},ROW=${a}_${s}" scripts/cluster/tamia_rung6_pv_eval_job.sh)"
           echo "${EJ}" >> "${OUT}/EVAL_JOBS"; echo "[queue-post]   eval ${a}_${s}: job ${EJ}"; sleep 2
         done
