@@ -15,7 +15,8 @@
 # Packs (PACKS below; add a row for the fold 1-2 extension, then `record <pack>` + `submit <pack>` + `queue-post <pack>`):
 #   S0 = fold-0 screen: GPU g = on-harmony + open-ms + chaos of arm g (on-harmony ~60 s/epoch shared -> ~34 h = chain 2 x 24 h;
 #   open-ms ~10 h and chaos ~3 h finish inside chain job 1, so their post jobs wait on chain job 1 only).
-# PA_ROUND=3 (2026-10-17): round 3 = gentler Auglab weakening (unsharpoff, redistoff, edgehalf, texhalf; AugLab d623eef configs), same
+# PA_ROUND=3 (2026-10-17): round 3 = Auglab weakening (redistoff, structoff, structoffredistoff + ctrlrep = control replicate with
+#   NNUNET_SEED_OFFSET=500; AugLab 38d9f01 configs), same
 #   protocol; reference = round 2's ctrl (not retrained). Own state file / pack root / TS (TAG pa_variants_r3), pack R3S0 with the S0 layout.
 #   Every mode takes PA_ROUND=3 (record, submit, queue-post, status, runids); runs.sh resolves round-3 RUN_IDs from that root.
 #   Design: /scratch/paulh/review_20261017/weaken/DESIGN.md (Vulcan).
@@ -31,7 +32,9 @@ O=$T/brain_healthy/on-harmony/5_scripts_on-harmony; M=$T/brain_ms/open-ms/5_scri
 declare -A METH=([ctrl]=auglabAugCtrl_v26_6_2_train050_val000 [p075]=auglabAugP075_v26_6_2_train075_val000
                  [edge2x]=auglabAugEdge2x_v26_6_2_train050_val000 [alphawide]=auglabAugAlphaWide_v26_6_2_train050_val000
                  [unsharpoff]=auglabAugUnsharpOff_v26_6_2_train050_val000 [redistoff]=auglabAugRedistOff_v26_6_2_train050_val000
-                 [edgehalf]=auglabAugEdgeHalf_v26_6_2_train050_val000 [texhalf]=auglabAugTexHalf_v26_6_2_train050_val000)
+                 [edgehalf]=auglabAugEdgeHalf_v26_6_2_train050_val000 [texhalf]=auglabAugTexHalf_v26_6_2_train050_val000
+                 [structoff]=auglabAugStructOff_v26_6_2_train050_val000 [structoffredistoff]=auglabAugStructOffRedistOff_v26_6_2_train050_val000
+                 [ctrlrep]=auglabAugCtrlRep_v26_6_2_train050_val000)
 declare -A CFG=([ctrl]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050.json
                 [p075]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train075.json
                 [edge2x]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_edge2x.json
@@ -39,11 +42,14 @@ declare -A CFG=([ctrl]=transform_params_gpu_default01-23_auglabAug_ImageContrast
                 [unsharpoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_unsharpoff.json
                 [redistoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_redistoff.json
                 [edgehalf]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_edgehalf.json
-                [texhalf]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_texhalf.json)
-# train wrapper numbers per setting, in arm order (round 2: ctrl p075 edge2x alphawide; round 3: unsharpoff redistoff edgehalf texhalf)
+                [texhalf]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_texhalf.json
+                [structoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_structoff.json
+                [structoffredistoff]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050_structoff_redistoff.json
+                [ctrlrep]=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050.json)
+# train wrapper numbers per setting, in arm order (round 2: ctrl p075 edge2x alphawide; round 3: redistoff structoff structoffredistoff ctrlrep)
 if [ "${PA_ROUND}" = 3 ]; then
-declare -A NUM=([onh_t1w]="04_72 04_73 04_74 04_75" [openms_flair]="04_56 04_57 04_58 04_59" [chaos_t2spir]="04_76 04_77 04_78 04_79")
-ARMS_ORDER=(unsharpoff redistoff edgehalf texhalf)
+declare -A NUM=([onh_t1w]="04_73 04_76 04_77 04_78" [openms_flair]="04_57 04_60 04_61 04_62" [chaos_t2spir]="04_77 04_80 04_81 04_82")
+ARMS_ORDER=(redistoff structoff structoffredistoff ctrlrep)
 else
 declare -A NUM=([onh_t1w]="04_68 04_69 04_70 04_71" [openms_flair]="04_52 04_53 04_54 04_55" [chaos_t2spir]="04_72 04_73 04_74 04_75")
 ARMS_ORDER=(ctrl p075 edge2x alphawide)
@@ -56,7 +62,7 @@ SETTINGS=(
 )
 # pack | "arm:setting:folds ..." (recording order) | PACK_GPU_MAP (one GPU per recorded fold) | chain length
 if [ "${PA_ROUND}" = 3 ]; then PACKS=(
-"R3S0|unsharpoff:onh_t1w:0 unsharpoff:openms_flair:0 unsharpoff:chaos_t2spir:0 redistoff:onh_t1w:0 redistoff:openms_flair:0 redistoff:chaos_t2spir:0 edgehalf:onh_t1w:0 edgehalf:openms_flair:0 edgehalf:chaos_t2spir:0 texhalf:onh_t1w:0 texhalf:openms_flair:0 texhalf:chaos_t2spir:0|0 0 0 1 1 1 2 2 2 3 3 3|2"
+"R3S0|redistoff:onh_t1w:0 redistoff:openms_flair:0 redistoff:chaos_t2spir:0 structoff:onh_t1w:0 structoff:openms_flair:0 structoff:chaos_t2spir:0 structoffredistoff:onh_t1w:0 structoffredistoff:openms_flair:0 structoffredistoff:chaos_t2spir:0 ctrlrep:onh_t1w:0 ctrlrep:openms_flair:0 ctrlrep:chaos_t2spir:0|0 0 0 1 1 1 2 2 2 3 3 3|2"
 ); else PACKS=(
 "S0|ctrl:onh_t1w:0 ctrl:openms_flair:0 ctrl:chaos_t2spir:0 p075:onh_t1w:0 p075:openms_flair:0 p075:chaos_t2spir:0 edge2x:onh_t1w:0 edge2x:openms_flair:0 edge2x:chaos_t2spir:0 alphawide:onh_t1w:0 alphawide:openms_flair:0 alphawide:chaos_t2spir:0|0 0 0 1 1 1 2 2 2 3 3 3|2"
 ); fi
@@ -121,7 +127,7 @@ PY
       clean="$(sed -e 's/\\n/\n/g' -e "s/\\\\'//g" "$cmd")"
       get() { printf '%s\n' "$clean" | sed -n "s/^ *export $1=//p" | head -1; }
       pre=$(get nnUNet_preprocessed); res=$(get nnUNet_results); cfgp=$(get AUGLAB_PARAMS_GPU_JSON); cfg=${cfgp##*/}; ep=$(get NNUNET_NUM_EPOCHS)
-      vcfg=$(get AUGLAB_VAL_PARAMS_GPU_JSON); da=$(get nnUNet_n_proc_DA)
+      vcfg=$(get AUGLAB_VAL_PARAMS_GPU_JSON); da=$(get nnUNet_n_proc_DA); so=$(get NNUNET_SEED_OFFSET); so="${so//\'/}"
       tr=$(printf '%s\n' "$clean" | grep -o '\-tr [A-Za-z0-9_]*' | head -1 | cut -d' ' -f2)
       erow="${exp_rows[$i]}"; earm="${erow%%|*}"; es="${erow#*|}"; es="${es%%:*}"
       IFS='|' read -r _ _ _ _ etr eep <<<"$(setting_row "${es}")"
@@ -137,8 +143,9 @@ PY
       [ "$tr" = "$etr" ] || ok="${ok},TRAINER($tr)"
       [ -n "${PROBE:-}" ] || [ "$ep" = "$eep" ] || [ "$ep" = "'$eep'" ] || ok="${ok},EPOCHS($ep)"
       grep -q "nnUNetv2_train" "$cmd" || ok="${ok},NO_TRAIN_CMD"
+      [ "${so:-0}" = "$([ "${earm}" = ctrlrep ] && echo 500 || echo 0)" ] || ok="${ok},SEED_OFFSET(${so:-unset})"
       [ -e "$res" ] && ok="${ok},RESULTS_DIR_ALREADY_EXISTS"
-      printf '   %-6s GPU%s %s\n      trainer=%s ep=%s DA=%s cfg=%s\n      results=%s\n' "$ok" "${G[$i]}" "$name" "$tr" "$ep" "$da" "$cfg" "$res"
+      printf '   %-6s GPU%s %s\n      trainer=%s ep=%s DA=%s seed_offset=%s cfg=%s\n      results=%s\n' "$ok" "${G[$i]}" "$name" "$tr" "$ep" "$da" "${so:-0}" "$cfg" "$res"
       [ "$ok" = OK ] || bad=1; i=$((i+1))
     done < "${PACKS_ROOT}/$p/index.tsv"
   done
