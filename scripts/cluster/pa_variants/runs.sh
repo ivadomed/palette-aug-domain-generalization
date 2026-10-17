@@ -6,19 +6,19 @@
 # Row: name|group|dir|env|tamia env|tc|predict wrapper|args|RUN prefix|expected predictions|eval kind|expected scored cases
 # PA_ARMS (optional, default "ctrl p075 edge2x alphawide"): restrict the rows to these arms (e.g. the fold 1-2 extension).
 # Folds: the job bodies read RUNG_FOLDS (fold-0 screen: RUNG_FOLDS=0).
-# PA_ROUND (default 2): 3 = round 3 arms (redistoff structoff structoffredistoff ctrl81), RUN_IDs from the round-3 pack root.
+# PA_ROUND (default 2): 3 = round 3 arms (redistoff structoff structoffredistoff structoffbluroff), RUN_IDs from the round-3 pack root.
 source scripts/cluster/tamia_rung6_pv_runs.sh     # shared helpers (rung6_eval_pre_env, rung6_predict_extra_env) + dir vars/counts
 declare -A PA_METHOD=([ctrl]=auglabAugCtrl_v26_6_2_train050_val000 [p075]=auglabAugP075_v26_6_2_train075_val000
                       [edge2x]=auglabAugEdge2x_v26_6_2_train050_val000 [alphawide]=auglabAugAlphaWide_v26_6_2_train050_val000
                       [unsharpoff]=auglabAugUnsharpOff_v26_6_2_train050_val000 [redistoff]=auglabAugRedistOff_v26_6_2_train050_val000
                       [edgehalf]=auglabAugEdgeHalf_v26_6_2_train050_val000 [texhalf]=auglabAugTexHalf_v26_6_2_train050_val000
                       [structoff]=auglabAugStructOff_v26_6_2_train050_val000
-                      [structoffredistoff]=auglabAugStructOffRedistOff_v26_6_2_train050_val000 [ctrl81]=auglabAugCtrl81_v26_6_2_train050_val000)
+                      [structoffredistoff]=auglabAugStructOffRedistOff_v26_6_2_train050_val000 [structoffbluroff]=auglabAugStructOffBlurOff_v26_6_2_train050_val000)
 declare -A PA_NUM_O=([ctrl]=05_43 [p075]=05_44 [edge2x]=05_45 [alphawide]=05_46     # on-harmony / open-ms predict numbers
-                     [redistoff]=05_48 [structoff]=05_51 [structoffredistoff]=05_52 [ctrl81]=05_53)
+                     [redistoff]=05_48 [structoff]=05_51 [structoffredistoff]=05_52 [structoffbluroff]=05_53)
 declare -A PA_NUM_C=([ctrl]=05_58 [p075]=05_59 [edge2x]=05_60 [alphawide]=05_61     # chaos predict numbers
-                     [redistoff]=05_63 [structoff]=05_66 [structoffredistoff]=05_67 [ctrl81]=05_68)
-if [ "${PA_ROUND:-2}" = 3 ]; then _PA_DEFAULT_ARMS="redistoff structoff structoffredistoff ctrl81"; _PA_TAG=pa_variants_r3
+                     [redistoff]=05_63 [structoff]=05_66 [structoffredistoff]=05_67 [structoffbluroff]=05_68)
+if [ "${PA_ROUND:-2}" = 3 ]; then _PA_DEFAULT_ARMS="redistoff structoff structoffredistoff structoffbluroff"; _PA_TAG=pa_variants_r3
 else _PA_DEFAULT_ARMS="ctrl p075 edge2x alphawide"; _PA_TAG=pa_variants; fi
 RUNG_ROWS=()
 for _a in ${PA_ARMS:-${_PA_DEFAULT_ARMS}}; do _m="${PA_METHOD[${_a}]:?unknown arm ${_a}}"

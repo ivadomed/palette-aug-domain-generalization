@@ -7,8 +7,7 @@ val000 run with all its folds + the same headline run restricted to the table's 
   vs_<arm>/         sig_ref = that arm, all contrasts: the control row's p-value = one-sided "arm better than control"
   vs_<arm>_ho/      same, held-out contrasts only
 Arms = the run table's `arm` column (round 2: ctrl p075 edge2x alphawide; round 1 re-read: ctrl texlite keepres edgeonly;
-round 3: ctrl81 + the weakening arms + round 2's ctrl). The reference arm is PA_REF_ARM (env, default `ctrl`; round 3 = `ctrl81`,
-its own control at the same loader / seed) and is required; every vs_ctrl* name below means vs_<PA_REF_ARM>.
+round 3: the weakening arms + round 2's ctrl). The reference arm is PA_REF_ARM (env, default `ctrl`) and is required; every vs_ctrl* name below means vs_<PA_REF_ARM>.
 Each arm row is restricted to the table's folds (a round-1 arm evaluated on folds 0-2 enters a fold-0 table with fold 0 only).
 usage: python write_configs.py <run_ids.tsv> <out root> [<title prefix>]   (run_ids.tsv: setting, fold, run_id, pack, arm)"""
 import collections, csv, os, sys

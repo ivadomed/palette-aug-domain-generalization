@@ -14,9 +14,10 @@ Round 3 (2026-10-17, Auglab weakening; reference = round 2's ctrl, not regenerat
   redistoff  RedistributeSegTransform 0.4 -> 0                           METHOD auglabAugRedistOff_v26_6_2_train050_val000
   structoff  Scharr, RandomConv, UnsharpMask -> 0                        METHOD auglabAugStructOff_v26_6_2_train050_val000
   structoffredistoff  structoff + RedistributeSeg -> 0                   METHOD auglabAugStructOffRedistOff_v26_6_2_train050_val000
-  ctrl81     headline config unchanged = round 3's own control (same loader + seed as the other round-3 arms)
-                                                                         METHOD auglabAugCtrl81_v26_6_2_train050_val000
-  GaussianNoise / Blur / SimulateLowRes untouched in every arm. Every round-3 train wrapper runs 8 data-loader workers + torch
+  structoffbluroff  structoff + GaussianBlur 0.2 -> 0 (PALETTE's own internal blur kept)
+                                                                         METHOD auglabAugStructOffBlurOff_v26_6_2_train050_val000
+  GaussianNoise / SimulateLowRes untouched in every arm (GaussianBlur too except structoffbluroff). Reference = round 2's ctrl
+  (no new control trained, user 2026-10-17). Every round-3 train wrapper runs 8 data-loader workers + torch
   compile (user, 2026-10-17): open-ms's dataset default; on-harmony / chaos via the explicit train_common.sh override
   (ALLOW_METHOD_LOADER_OVERRIDE=1), their dataset defaults (0/0) stay until round 2 ends. Configs defined but dropped before training (NGF gate, user
   2026-10-17): unsharpoff, edgehalf, texhalf (AugLab d623eef).
@@ -51,10 +52,10 @@ ARMS = {
                   "ScharrTransform, RandomConvTransform and UnsharpMaskTransform -> 0"),
     "structoffredistoff": (CFG.format("train050_structoff_redistoff"), "auglabAugStructOffRedistOff_v26_6_2_train050_val000",
                            "Scharr, RandomConv, UnsharpMask and RedistributeSeg -> 0"),
-    "ctrl81": (OLDCFG, "auglabAugCtrl81_v26_6_2_train050_val000",
-               "round-3 control: headline config UNCHANGED, 8 data-loader workers + compile like the other round-3 arms"),
+    "structoffbluroff": (CFG.format("train050_structoff_bluroff"), "auglabAugStructOffBlurOff_v26_6_2_train050_val000",
+                         "Scharr, RandomConv, UnsharpMask and GaussianBlur -> 0 (PALETTE's internal blur kept)"),
 }
-ORDERS = {2: ["ctrl", "p075", "edge2x", "alphawide"], 3: ["redistoff", "structoff", "structoffredistoff", "ctrl81"]}
+ORDERS = {2: ["ctrl", "p075", "edge2x", "alphawide"], 3: ["redistoff", "structoff", "structoffredistoff", "structoffbluroff"]}
 # extra lines put after METHOD= in a round's TRAIN wrappers, per contrast tag
 LOADER81 = ("export ALLOW_METHOD_LOADER_OVERRIDE=1 DA_WORKERS=8 nnUNet_compile=1   "
             "# round 3: 8 workers + compile in every arm (dataset default 0/0 kept for round 2)")

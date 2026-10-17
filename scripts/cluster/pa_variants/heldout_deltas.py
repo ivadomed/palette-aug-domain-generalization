@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "benchmark/00_commun_scripts/00_03_evaluate"))
 sys.path.insert(0, str(ROOT / "benchmark/00_commun_scripts/00_00_utils"))
 from aggregate_from_config import load_run, cross_fold_class_mean  # noqa: E402 -- same cell math as the tables
 
-REFARM = os.environ.get("PA_REF_ARM", "ctrl")   # the control the deltas are taken against (round 3: ctrl81)
+REFARM = os.environ.get("PA_REF_ARM", "ctrl")   # the control the deltas are taken against (default: ctrl)
 LABEL = {"onh_t1w": "Brain", "openms_flair": "MS", "chaos_t2spir": "Abdomen"}
 
 
