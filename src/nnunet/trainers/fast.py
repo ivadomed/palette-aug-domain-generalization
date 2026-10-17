@@ -12,7 +12,7 @@ cadence and checkpoint selection are left exactly as upstream defines them.
 
 What it changes vs. stock nnUNetTrainer
 ---------------------------------------
-1. Deterministic seeding (BASE_SEED + fold) for all RNGs — reproducible data
+1. Deterministic seeding (BASE_SEED + 1000*fold [+ NNUNET_SEED_OFFSET]) for all RNGs — reproducible data
    sampling, augmentation and weight init.  We intentionally do NOT force
    cudnn.deterministic: the entry point sets cudnn.benchmark=True for speed and
    we keep it.  Conv-level non-determinism is the accepted price of a *fast*
@@ -144,7 +144,13 @@ class nnUNetTrainerFast(nnUNetTrainer):
         # identical batches and data-parallelism degenerates to batch-1 diversity.
         # InstanceNorm (this network's norm) is per-sample, so DDP batch-1-per-GPU
         # is mathematically equivalent to single-GPU batch-N — no accuracy change.
-        seed = BASE_SEED + 1000 * self.fold + self.local_rank
+        # NNUNET_SEED_OFFSET (default 0 = the seed every run so far used): a replicate training of the same
+        # setting/fold with a different RNG stream (data sampling, augmentation, weight init), e.g. to
+        # measure seed noise (PA variants round 3 `ctrlrep`, 2026-10-17). train_common.sh bakes it into
+        # every recorded fold command.
+        seed = BASE_SEED + 1000 * self.fold + self.local_rank + int(os.environ.get("NNUNET_SEED_OFFSET", "0"))
+        print(f"[seed] fold={self.fold} rank={self.local_rank} seed={seed} "
+              f"(NNUNET_SEED_OFFSET={os.environ.get('NNUNET_SEED_OFFSET', '0')})", flush=True)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         np.random.seed(seed)
