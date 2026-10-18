@@ -23,6 +23,7 @@ RID="${RID:?RID (texlite run id) required}"
 case "${TEXLITE_ARM:-}" in
   "") W_OWN=05_12_predict_t1w_auglabAugTexlite_v26_6_2_train050_val000.sh; W_CROSS=05_16_predict_atlas_auglabAugTexlite_v26_6_2_train050_val000.sh ;;
   keepres) W_OWN=05_13_predict_t1w_auglabAugTexliteKeepres_v26_6_2_train050_val000.sh; W_CROSS=05_17_predict_atlas_auglabAugTexliteKeepres_v26_6_2_train050_val000.sh ;;
+  ssem50) W_OWN=05_36_predict_t1w_auglabAug_synthseg_EM_train050_val000.sh; W_CROSS=05_24_predict_atlas_auglabAug_synthseg_EM_train050_val000.sh ;;   # SynthSeg-EM (+Auglab; 50%) arm, scripts/cluster/ssem50/
   *) echo "[texlite] unknown TEXLITE_ARM='${TEXLITE_ARM}'"; exit 2 ;;
 esac
 CAT=auglab

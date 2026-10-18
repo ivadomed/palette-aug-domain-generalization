@@ -1,0 +1,3 @@
+cd /project/aip-jcohen/paulh/mri_synthesis_project/benchmark/02_tasks
+for d in brain_tumor/brats2024-glioma abdomen_healthy/chaos brain_healthy/on-harmony brain_ms/open-ms mandible_healthy/toothfairy2 breast_cancer/ispy2 pelvis_healthy/totalseg-pelvic liver_hcc/atlas-liver-hcc pancreas_disease/pansegdata breast_cancer/duke-breast-mri breast_cancer/ispy1 breast_cancer/acrin6698 mandible_healthy/hanseg mandible_healthy/pddca liver_hcc/lld-mmri-hcc liver_hcc/liverhccseg; do n=$(basename $d)
+ for s in 04_train 05_predict; do echo "$n $s $(ls $d/5_scripts_$n/$s 2>/dev/null | grep -oE '^0[45]_[0-9]+' | LC_ALL=C sort -u | tr '\n' ' ')"; done; done
