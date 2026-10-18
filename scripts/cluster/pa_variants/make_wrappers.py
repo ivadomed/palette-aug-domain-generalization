@@ -10,9 +10,21 @@ Arms (AugLab palette branch, configs in auglab/configs/):
   p075      PALETTE probability 0.5 -> 0.75                              METHOD auglabAugP075_v26_6_2_train075_val000
   edge2x    Scharr 0.25 -> 0.50, RandomConv 0.20 -> 0.40                 METHOD auglabAugEdge2x_v26_6_2_train050_val000
   alphawide PALETTE alpha_magnitude_range [0.5, 2.0] -> [0.25, 3.0]      METHOD auglabAugAlphaWide_v26_6_2_train050_val000
+Round 3 (2026-10-17, Auglab weakening; reference = round 2's ctrl, not regenerated; AugLab 38d9f01):
+  redistoff  RedistributeSegTransform 0.4 -> 0                           METHOD auglabAugRedistOff_v26_6_2_train050_val000
+  structoff  Scharr, RandomConv, UnsharpMask -> 0                        METHOD auglabAugStructOff_v26_6_2_train050_val000
+  structoffredistoff  structoff + RedistributeSeg -> 0                   METHOD auglabAugStructOffRedistOff_v26_6_2_train050_val000
+  structoffbluroff  structoff + GaussianBlur 0.2 -> 0 (PALETTE's own internal blur kept)
+                                                                         METHOD auglabAugStructOffBlurOff_v26_6_2_train050_val000
+  GaussianNoise / SimulateLowRes untouched in every arm (GaussianBlur too except structoffbluroff). Reference = round 2's ctrl
+  (no new control trained, user 2026-10-17). Every round-3 train wrapper runs 8 data-loader workers + torch
+  compile (user, 2026-10-17): open-ms's dataset default; on-harmony / chaos via the explicit train_common.sh override
+  (ALLOW_METHOD_LOADER_OVERRIDE=1), their dataset defaults (0/0) stay until round 2 ends. Configs defined but dropped before training (NGF gate, user
+  2026-10-17): unsharpoff, edgehalf, texhalf (AugLab d623eef).
+  (design: /scratch/paulh/review_20261017/weaken/DESIGN.md on Vulcan)
 No METHOD contains REF_SUBSTR (auglabAug_v26_6_2_train050_val000), so the headline run stays the default `sig. vs ref`; the round's
 own tables set sig_ref explicitly. Design: /scratch/paulh/review_20261016/new_variants/DESIGN.md (Vulcan).
-  python scripts/cluster/pa_variants/make_wrappers.py [--check]
+  python scripts/cluster/pa_variants/make_wrappers.py [--round 2|3] [--check]   (default round 2; --check without --round checks both)
 """
 import re, sys
 from pathlib import Path
@@ -28,29 +40,53 @@ ARMS = {
                "ScharrTransform 0.25 -> 0.50 and RandomConvTransform 0.20 -> 0.40"),
     "alphawide": (CFG.format("train050_alphawide"), "auglabAugAlphaWide_v26_6_2_train050_val000",
                   "PALETTE alpha_magnitude_range [0.5, 2.0] -> [0.25, 3.0]"),
+    "unsharpoff": (CFG.format("train050_unsharpoff"), "auglabAugUnsharpOff_v26_6_2_train050_val000",
+                   "UnsharpMaskTransform 0.25 -> 0"),
+    "redistoff": (CFG.format("train050_redistoff"), "auglabAugRedistOff_v26_6_2_train050_val000",
+                  "RedistributeSegTransform 0.4 -> 0"),
+    "edgehalf": (CFG.format("train050_edgehalf"), "auglabAugEdgeHalf_v26_6_2_train050_val000",
+                 "ScharrTransform 0.25 -> 0.125 and RandomConvTransform 0.20 -> 0.10"),
+    "texhalf": (CFG.format("train050_texhalf"), "auglabAugTexHalf_v26_6_2_train050_val000",
+                "ScharrTransform 0.25 -> 0.125, RandomConvTransform 0.20 -> 0.10, UnsharpMaskTransform 0.25 -> 0.125"),
+    "structoff": (CFG.format("train050_structoff"), "auglabAugStructOff_v26_6_2_train050_val000",
+                  "ScharrTransform, RandomConvTransform and UnsharpMaskTransform -> 0"),
+    "structoffredistoff": (CFG.format("train050_structoff_redistoff"), "auglabAugStructOffRedistOff_v26_6_2_train050_val000",
+                           "Scharr, RandomConv, UnsharpMask and RedistributeSeg -> 0"),
+    "structoffbluroff": (CFG.format("train050_structoff_bluroff"), "auglabAugStructOffBlurOff_v26_6_2_train050_val000",
+                         "Scharr, RandomConv, UnsharpMask and GaussianBlur -> 0 (PALETTE's internal blur kept)"),
 }
-ORDER = ["ctrl", "p075", "edge2x", "alphawide"]
+ORDERS = {2: ["ctrl", "p075", "edge2x", "alphawide"], 3: ["redistoff", "structoff", "structoffredistoff", "structoffbluroff"]}
+# extra lines put after METHOD= in a round's TRAIN wrappers, per contrast tag
+LOADER81 = ("export ALLOW_METHOD_LOADER_OVERRIDE=1 DA_WORKERS=8 nnUNet_compile=1   "
+            "# round 3: 8 workers + compile in every arm (dataset default 0/0 kept for round 2)")
+EXTRA = {3: {"t1w": LOADER81, "t2spir": LOADER81}}
 O = "benchmark/02_tasks/brain_healthy/on-harmony/5_scripts_on-harmony"
 M = "benchmark/02_tasks/brain_ms/open-ms/5_scripts_open-ms"
 C = "benchmark/02_tasks/abdomen_healthy/chaos/5_scripts_chaos"
-# kind, dir, source, destination stem (number per arm, in ORDER), contrast tag, trainer override
+# kind, dir, source, destination stems per round (number per arm, in ORDERS[round]), contrast tag, trainer override
 ROWS = [
-    ("train", O, "04_train/04_26_train_t1w_auglabAug_v26_6_2_dualval.sh", ["04_68", "04_69", "04_70", "04_71"], "t1w", "nnUNetTrainerOnHarmonyAugLabDefault"),
-    ("train", M, "04_train/04_22_train_auglabAug_v26_6_2_train050_val000.sh", ["04_52", "04_53", "04_54", "04_55"], "flair", None),
-    ("train", C, "04_train/04_44_train_t2spir_auglabAug_v26_6_2_train050_val000.sh", ["04_72", "04_73", "04_74", "04_75"], "t2spir", None),
-    ("predict", O, "05_predict/05_08_predict_t1w_auglabAug_v26_6_2_train050_val000.sh", ["05_43", "05_44", "05_45", "05_46"], "t1w", "nnUNetTrainerOnHarmonyAugLabDefault"),
-    ("predict", M, "05_predict/05_20_predict_auglabAug_v26_6_2_train050_val000.sh", ["05_43", "05_44", "05_45", "05_46"], "flair", None),
-    ("predict", C, "05_predict/05_34_predict_t2spir_auglabAug_v26_6_2_train050_val000.sh", ["05_58", "05_59", "05_60", "05_61"], "t2spir", None),
+    ("train", O, "04_train/04_26_train_t1w_auglabAug_v26_6_2_dualval.sh",
+     {2: ["04_68", "04_69", "04_70", "04_71"], 3: ["04_73", "04_76", "04_77", "04_78"]}, "t1w", "nnUNetTrainerOnHarmonyAugLabDefault"),
+    ("train", M, "04_train/04_22_train_auglabAug_v26_6_2_train050_val000.sh",
+     {2: ["04_52", "04_53", "04_54", "04_55"], 3: ["04_57", "04_60", "04_61", "04_62"]}, "flair", None),
+    ("train", C, "04_train/04_44_train_t2spir_auglabAug_v26_6_2_train050_val000.sh",
+     {2: ["04_72", "04_73", "04_74", "04_75"], 3: ["04_77", "04_80", "04_81", "04_82"]}, "t2spir", None),
+    ("predict", O, "05_predict/05_08_predict_t1w_auglabAug_v26_6_2_train050_val000.sh",
+     {2: ["05_43", "05_44", "05_45", "05_46"], 3: ["05_48", "05_51", "05_52", "05_53"]}, "t1w", "nnUNetTrainerOnHarmonyAugLabDefault"),
+    ("predict", M, "05_predict/05_20_predict_auglabAug_v26_6_2_train050_val000.sh",
+     {2: ["05_43", "05_44", "05_45", "05_46"], 3: ["05_48", "05_51", "05_52", "05_53"]}, "flair", None),
+    ("predict", C, "05_predict/05_34_predict_t2spir_auglabAug_v26_6_2_train050_val000.sh",
+     {2: ["05_58", "05_59", "05_60", "05_61"], 3: ["05_63", "05_66", "05_67", "05_68"]}, "t2spir", None),
 ]
 HDR_TRAIN = """#!/usr/bin/env bash
 # GENERATED by scripts/cluster/pa_variants/make_wrappers.py from {src} (do not hand-edit).
-# PA variants round 2, arm "{arm}" ({desc}): the headline PALETTE-Aug training of this setting with ONLY the train config set to
+# PA variants round {rnd}, arm "{arm}" ({desc}): the headline PALETTE-Aug training of this setting with ONLY the train config set to
 # {cfg}. Validation on REAL images (val000){dv}. Epochs, folds, loader settings and env are those of the headline wrapper.
 # Usage: bash {dst} [RUN_ID]   (RUN_ID to resume)
 """
 HDR_PRED = """#!/usr/bin/env bash
 # GENERATED by scripts/cluster/pa_variants/make_wrappers.py from {src} (do not hand-edit).
-# Predict with the PA variants round 2 arm "{arm}" ({desc}); TRAINER = the trainer it was trained with{dv}.
+# Predict with the PA variants round {rnd} arm "{arm}" ({desc}); TRAINER = the trainer it was trained with{dv}.
 # Usage: bash {dst} <RUN_ID> [...]   (same arguments as {src})
 """
 
@@ -70,7 +106,7 @@ def sub1(s, pat, rep, what, count=1):
     return t
 
 
-def build(kind, d, src, dst, arm, trainer):
+def build(kind, d, src, dst, arm, trainer, rnd, tc):
     cfg, meth, desc = ARMS[arm]
     body = strip_header((ROOT / d / src).read_text())
     body = sub1(body, r'^METHOD="[^"]*"', f'METHOD="{meth}"', f"{dst} METHOD")
@@ -84,25 +120,29 @@ def build(kind, d, src, dst, arm, trainer):
         body = re.sub(r'(LOG_DIR="[^"]*?)(auglabAug_v26_6_2_(?:train050_(?:dualval|val000)|dualval))', r'\g<1>' + meth, body)
         if "DA_WORKERS" in body or "NNUNET_COMPILE" in body:
             raise SystemExit(f"{src}: sets loader variables; the round must use the dataset defaults")
-        hdr = HDR_TRAIN.format(src=Path(src).name, dst=Path(dst).name, cfg=cfg, dv=dv, arm=arm, desc=desc)
+        if tc in EXTRA.get(rnd, {}):
+            body = sub1(body, r'^(METHOD="[^"]*")$', r'\1' + "\n" + EXTRA[rnd][tc], f"{dst} extra")
+        hdr = HDR_TRAIN.format(src=Path(src).name, dst=Path(dst).name, cfg=cfg, dv=dv, arm=arm, desc=desc, rnd=rnd)
     else:
-        hdr = HDR_PRED.format(src=Path(src).name, dst=Path(dst).name, dv=dv, arm=arm, desc=desc)
+        hdr = HDR_PRED.format(src=Path(src).name, dst=Path(dst).name, dv=dv, arm=arm, desc=desc, rnd=rnd)
     return hdr + "\n" + body
 
 
-def wrappers():
-    for kind, d, src, nums, tc, trainer in ROWS:
-        for arm, num in zip(ORDER, nums):
-            verb = "train" if kind == "train" else "predict"
-            dst = f"{src.split('/')[0]}/{num}_{verb}_{tc}_{ARMS[arm][1]}.sh"
-            yield kind, d, src, dst, arm, trainer
+def wrappers(rounds):
+    for rnd in rounds:
+        for kind, d, src, nums, tc, trainer in ROWS:
+            for arm, num in zip(ORDERS[rnd], nums[rnd]):
+                verb = "train" if kind == "train" else "predict"
+                dst = f"{src.split('/')[0]}/{num}_{verb}_{tc}_{ARMS[arm][1]}.sh"
+                yield kind, d, src, dst, arm, trainer, rnd, tc
 
 
 def main():
     check = "--check" in sys.argv
+    rounds = [int(sys.argv[sys.argv.index("--round") + 1])] if "--round" in sys.argv else ([2, 3] if check else [2])
     bad = 0
-    for kind, d, src, dst, arm, trainer in wrappers():
-        out = build(kind, d, src, dst, arm, trainer)
+    for kind, d, src, dst, arm, trainer, rnd, tc in wrappers(rounds):
+        out = build(kind, d, src, dst, arm, trainer, rnd, tc)
         p = ROOT / d / dst
         if check:
             ok = p.exists() and p.read_text() == out

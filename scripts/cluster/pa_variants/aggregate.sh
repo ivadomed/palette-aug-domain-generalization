@@ -2,6 +2,8 @@
 # Vulcan tail of the PA variants round 2 (scripts/cluster/pa_variants/launch.sh on TamIA):
 #   bash scripts/cluster/pa_variants/aggregate.sh runids      # run table from the TamIA pack root -> ${W}/run_ids.tsv
 #   round 3: export PA_ROUND=3 W=/scratch/paulh/review_20261017/weaken/round3 AGG_TITLE="PA variants round 3"; then runids|fetch|aggregate
+#   (reference PA_REF_ARM = round 2's `ctrl`, whose rows runids adds to the round-3 table; round 3 runs at 8 workers + compile, ctrl
+#   at the dataset defaults (on-harmony / chaos 0/0): that comparison carries the loader change, accepted by the user as negligible)
 #   bash scripts/cluster/pa_variants/aggregate.sh fetch       # md5-verified copy of each evaluated run's METRICS dir from TamIA
 #                                                             # scratch into the real results tree (flat, next to the headline PA)
 #   bash scripts/cluster/pa_variants/aggregate.sh aggregate   # CPU run_job: write_configs.py (scratch configs + symlinked metrics)
@@ -40,7 +42,7 @@ case "${1:?runids|fetch|aggregate|_job}" in
   aggregate)
     source scripts/job_runner/run_job.sh
     RUN_JOB_ACCOUNT=aip-jcohen run_job --name pa_variants_agg --gpus 0 --cpus 8 --mem 32G --time 01:00:00 \
-        --log "${W}/agg_%j.log" --wait -- env W="${W}" AGG_TITLE="${AGG_TITLE:-PA variants round 2}" bash scripts/cluster/pa_variants/aggregate.sh _job ;;
+        --log "${W}/agg_%j.log" --wait -- env W="${W}" AGG_TITLE="${AGG_TITLE:-PA variants round 2}" PA_REF_ARM="${PA_REF_ARM:-ctrl}" bash scripts/cluster/pa_variants/aggregate.sh _job ;;
   _job)
     .venv/bin/python scripts/cluster/pa_variants/write_configs.py "${W}/run_ids.tsv" "${W}/agg" "${AGG_TITLE:-PA variants round 2}"
     for c in "${W}"/agg/*/config_vs_*.yaml; do
