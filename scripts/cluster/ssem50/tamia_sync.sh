@@ -2,6 +2,9 @@
 # Bring TamIA's outer checkout up to Vulcan's pushed `main` for the ssem50 launch, per skill git-workflow reference/cluster-sync.md.
 # Run ON VULCAN:   bash scripts/cluster/ssem50/tamia_sync.sh            # --check (default): report blockers, change nothing
 #                  bash scripts/cluster/ssem50/tamia_sync.sh --pull     # do the pull (refuses on any blocker)
+#                  bash scripts/cluster/ssem50/tamia_sync.sh --pull-scripts-only   # pull although our jobs are pending/running, allowed ONLY
+#                      when every path of the range is a cluster / predict / evaluate script (scripts/cluster/, */05_predict/, */06_evaluate/):
+#                      nothing a training job imports (trainers, 04_train, 00_01_train, src/, AugLab) can change under a running job.
 # Steps: (1) Vulcan HEAD must be pushed (origin/main == HEAD); (2) TamIA must have no pending/running job of ours (jobs import trainers
 # from the working tree at start); (3) every TamIA-local modified file and every untracked file at a path the pull creates is md5-compared
 # with Vulcan's committed version: identical -> listed for `git checkout --` / move to $SCRATCH/toDelete_tamia_pull_<date>/, differing ->
@@ -12,7 +15,7 @@ set -euo pipefail
 cd /project/aip-jcohen/paulh/mri_synthesis_project
 MODE="${1:---check}"
 VH="$(git rev-parse HEAD)"; git fetch -q origin main 2>/dev/null || true
-[ "$(git rev-parse origin/main)" = "${VH}" ] || { echo "BLOCKER: Vulcan HEAD ${VH:0:7} is not pushed (origin/main $(git rev-parse --short origin/main)); push first (check_push.sh)"; [ "${MODE}" = --pull ] && exit 1; }
+[ "$(git rev-parse origin/main)" = "${VH}" ] || { echo "BLOCKER: Vulcan HEAD ${VH:0:7} is not pushed (origin/main $(git rev-parse --short origin/main)); push first (check_push.sh)"; if [ "${MODE}" != --check ]; then exit 1; fi; }
 TH="$(ssh tamia.alliancecan.ca 'cd /project/aip-jcohen/paulh/mri_synthesis_project && git rev-parse HEAD')"
 echo "[sync] Vulcan HEAD ${VH:0:7}  TamIA HEAD ${TH:0:7}"
 git merge-base --is-ancestor "${TH}" "${VH}" || { echo "BLOCKER: TamIA HEAD is not an ancestor of Vulcan HEAD (no fast-forward)"; exit 1; }
@@ -22,6 +25,11 @@ git diff --name-only "${TH}" "${VH}" | while read -r f; do
   if git cat-file -e "${VH}:${f}" 2>/dev/null; then printf '%s  %s\n' "$(git show "${VH}:${f}" | md5sum | cut -c1-32)" "$f"; else printf 'DELETED  %s\n' "$f"; fi
 done > "${LIST}"
 echo "[sync] the pull touches $(wc -l < "${LIST}") paths"
+if [ "${MODE}" = --pull-scripts-only ]; then
+  nonscript="$(awk '{print $2}' "${LIST}" | grep -vE '^scripts/cluster/|/5_scripts_[^/]+/0(5_predict|6_evaluate)/' || true)"
+  [ -z "${nonscript}" ] || { echo "BLOCKER (--pull-scripts-only): the range touches non-script paths:"; echo "${nonscript}"; rm -f "${LIST}"; exit 1; }
+  echo "[sync] --pull-scripts-only: every path is a cluster / predict / evaluate script"
+fi
 REMOTE="$(cat <<'EOS'
 set -uo pipefail
 cd /project/aip-jcohen/paulh/mri_synthesis_project
@@ -29,7 +37,7 @@ export SCRATCH="${SCRATCH:-/scratch/${USER:0:1}/${USER}}"
 MODE="$1"; LIST="$2"; VH="$3"
 diskusage_report 2>/dev/null | grep -i project || true
 n=$(squeue -u "$USER" -h | wc -l); echo "[tamia] jobs of ours in the queue: $n"; squeue -u "$USER" -h | head
-blk=0; [ "$n" = 0 ] || { echo "BLOCKER: jobs pending/running (they import trainers from this tree at start)"; blk=1; }
+blk=0; [ "$n" = 0 ] || [ "$MODE" = --pull-scripts-only ] || { echo "BLOCKER: jobs pending/running (they import trainers from this tree at start)"; blk=1; }
 mods="$(git status --porcelain | grep -v '^??' | awk '{print $2}')"; untr="$(git status --porcelain | grep '^??' | awk '{print $2}')"
 aside_mod=(); aside_untr=()
 while read -r h f; do
@@ -41,7 +49,7 @@ while read -r h f; do
   fi
 done < "$LIST"
 echo "[tamia] other local modifications (not touched by the pull): $(printf '%s\n' "$mods" | grep -c . || true); untracked (not touched): $(printf '%s\n' "$untr" | grep -c . || true)"
-if [ "$MODE" != --pull ]; then echo "[tamia] --check only. blockers=$blk; identical mods ${#aside_mod[@]}, identical untracked ${#aside_untr[@]}"; exit 0; fi
+if [ "$MODE" != --pull ] && [ "$MODE" != --pull-scripts-only ]; then echo "[tamia] --check only. blockers=$blk; identical mods ${#aside_mod[@]}, identical untracked ${#aside_untr[@]}"; exit 0; fi
 [ "$blk" = 0 ] || { echo "[tamia] REFUSING to pull (blockers)"; exit 1; }
 TS=$(date +%Y%m%d_%H%M%S); A="$SCRATCH/review_20261018/ssem50/pull_aside_$TS"; D="$SCRATCH/toDelete_tamia_pull_$(date +%Y%m%d)"; mkdir -p "$A" "$D"
 for p in CLAUDE.md .claude/settings.json .claude/hooks; do [ -e "$p" ] && cp -a --parents "$p" "$A/"; done

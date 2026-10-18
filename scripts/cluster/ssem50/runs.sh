@@ -4,11 +4,12 @@
 # `scripts/cluster/ssem50/launch.sh queue-post`. Same row format as tamia_rung6_pv_runs.sh / pa_variants/runs.sh; category `auglab`,
 # FLAT metrics next to the headline runs (RUNG_MSUB=""), each setting's generated predict wrapper, RUN_IDs resolved from the pack
 # recording (no timestamps here). 2nd field = post group (= the training setting; hanseg / pddca ride on tf2_cbct). Expected counts =
-# the rung-6 table's (same test sets). NOT in this table: atlas_t1w (no eval kind in the shared eval job), pansegdata (Vulcan),
+# the rung-6 table's (same test sets). NOT in this table: atlas_t1w (no eval kind in the shared eval job: own test set via atlas 05_35 with TEXLITE_ARM=ssem50 ATLAS_OWN_ONLY=1),
 # chaos -> amos / sliver07 fov_crop, breast and liver companions (see VERIFICATION.md).
 # Row: name|group|dir|env|tamia env|tc|predict wrapper|args|RUN prefix|expected predictions|eval kind|expected scored cases
 source scripts/cluster/tamia_rung6_pv_runs.sh     # shared helpers (rung6_eval_pre_env, rung6_predict_extra_env) + dir vars/counts
 _M=auglabAug_synthseg_EM_train050_val000
+PSG=pancreas_disease/pansegdata/5_scripts_pansegdata   # pansegdata (TamIA since 2026-10-18; eval kind "panseg")
 RUNG_ROWS=(
 "brats_t1n|brats_t1n|$B|env.sh|tamia_env.sh|t1n|05_83_predict_t1n_${_M}.sh||brats2024-glioma_t1n_${_M}|$BR|brats:051|$BR"
 "brats_t2w|brats_t2w|$B|env_t2w.sh|tamia_env.sh|t2w|05_84_predict_t2w_${_M}.sh||brats2024-glioma_t2w_${_M}|$BR|brats:052|$BR"
@@ -28,7 +29,18 @@ RUNG_ROWS=(
 "chaos_t2spir|chaos_t2spir|$C|env_t2spir.sh|tamia_env_chaos.sh|t2spir|05_70_predict_t2spir_${_M}.sh||chaos_t2spir_${_M}|$CH|chaos:61|$CH"
 "pelvic_ct|pelvic_ct|$P|env.sh|tamia_env_totalseg-pelvic.sh|ct|05_24_predict_ct_${_M}.sh||totalseg-pelvic_ct_${_M}|$PV|pelvic|$PV"
 "pelvic_mri|pelvic_mri|$P|env_mri.sh|tamia_env_totalseg-pelvic.sh|mri|05_25_predict_mri_${_M}.sh||totalseg-pelvic_mri_${_M}|$PV|pelvic|$PV"
+"panseg_t1wce|panseg_t1wce|$PSG|env.sh|tamia_env_pansegdata.sh|t1wce|05_32_predict_t1wce_${_M}.sh||pansegdata_t1wce_${_M}|t1wce:42 t2w:42|panseg|t1wce:42 t2w:42"
+"panseg_t2w|panseg_t2w|$PSG|env_t2w.sh|tamia_env_pansegdata.sh|t2w|05_33_predict_t2w_${_M}.sh||pansegdata_t2w_${_M}|t1wce:42 t2w:42|panseg|t1wce:42 t2w:42"
 )
+# Companion rows (hanseg_sif / pddca_sif) are dropped unless SSEM50_COMPANIONS=1: 2026-10-18 decision, companions run on Vulcan after the
+# checkpoint sync. The predict / eval job bodies source this file with the queue-post environment, so the drop applies to them too.
+# SSEM50_COMPANIONS=only (2026-10-18, `launch.sh queue-companions`): keep ONLY the companion rows, so a companion predict job behind the
+# setting's own predict job never re-predicts the own test set.
+case "${SSEM50_COMPANIONS:-0}" in
+  1) ;;
+  only) _k=(); for _r in "${RUNG_ROWS[@]}"; do case "${_r%%|*}" in *_sif) _k+=("$_r");; esac; done; RUNG_ROWS=("${_k[@]}") ;;
+  *) _k=(); for _r in "${RUNG_ROWS[@]}"; do case "${_r%%|*}" in *_sif) ;; *) _k+=("$_r");; esac; done; RUNG_ROWS=("${_k[@]}") ;;
+esac
 RUNG_CAT=auglab; RUNG_MSUB=""
 # run id from the pack recording: <PACKS_ROOT>/<any pack>/fold<k>_<prefix>_<timestamp>.sh -> exactly one distinct id
 rung_resolve_run() {

@@ -73,6 +73,9 @@ case "${ekind}" in
   pelvic)
     envsetup; export METRICS_SUBDIR="${RUNG_MSUB}"
     bash "$S/06_01_evaluate_run.sh" "${run}" "${RUNG_CAT}" || rc=1 ;;
+  panseg)    # pansegdata own test set (t1wce + t2w items), roster shim over evaluate_run_common.sh (added for the ssem50 arm, 2026-10-18)
+    envsetup; export METRICS_SUBDIR="${RUNG_MSUB}"
+    bash "$S/06_01_evaluate_run.sh" "${run}" "${RUNG_CAT}" || rc=1 ;;
   tf2)       # mandible-only in-domain; mirrors the run's 3-class metrics location -> seed it under ablations/
     [ -z "${RUNG_MSUB}" ] || mkdir -p "${SCRATCH}/toothfairy2/8_results/02_metrics/toothfairy2_model/cbct/${RUNG_MSUB}/${RUNG_CAT}_${run}"
     ONLY_RUN="${run}" bash "$S/06_08_evaluate_cbct.sh" || rc=1 ;;

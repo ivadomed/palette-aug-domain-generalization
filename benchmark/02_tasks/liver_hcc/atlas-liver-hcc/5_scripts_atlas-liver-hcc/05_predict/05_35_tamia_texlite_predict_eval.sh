@@ -14,6 +14,8 @@
 # Usage (on TamIA): RID=<run id> sbatch --dependency=afterany:<training chain jobs> --output=<log> 05_35_tamia_texlite_predict_eval.sh
 # TEXLITE_ARM=keepres: the second arm ("texlite_keepres", METHOD auglabAugTexliteKeepres_...): only the predict wrappers change
 # (05_13 / companion 05_17 instead of 05_12 / 05_16); unset = the texlite arm exactly as queued 2026-10-15.
+# ATLAS_OWN_ONLY=1: atlas own test set only. ATLAS_COMPANIONS_ONLY=1 (ssem50, 2026-10-18): lld-mmri-hcc + liverhccseg only (queued
+# afterok behind the own-only job by scripts/cluster/ssem50/launch.sh queue-companions); the checkpoint gate still runs.
 set -uo pipefail
 ROOT="/project/aip-jcohen/paulh/mri_synthesis_project"
 if [ -d "${ROOT}/benchmark/02_tasks/liver_hcc" ]; then AR="${ROOT}/benchmark/02_tasks/liver_hcc"; else AR="${ROOT}/benchmark/03_archive"; fi   # TamIA checkout: pre-2026-10-14 layout
@@ -27,7 +29,8 @@ case "${TEXLITE_ARM:-}" in
   *) echo "[texlite] unknown TEXLITE_ARM='${TEXLITE_ARM}'"; exit 2 ;;
 esac
 CAT=auglab
-PACK_DIR="${SCRATCH}/atlas-liver-hcc/_packruns/texlite${TEXLITE_ARM:+_${TEXLITE_ARM}}_predict_eval_$(date +%Y%m%d_%H%M%S)"; mkdir -p "${PACK_DIR}"
+[ "${ATLAS_OWN_ONLY:-0}" = 1 ] && [ "${ATLAS_COMPANIONS_ONLY:-0}" = 1 ] && { echo "[texlite] ATLAS_OWN_ONLY and ATLAS_COMPANIONS_ONLY are exclusive"; exit 2; }
+PACK_DIR="${SCRATCH}/atlas-liver-hcc/_packruns/texlite${TEXLITE_ARM:+_${TEXLITE_ARM}}${ATLAS_COMPANIONS_ONLY:+_companions}_predict_eval_$(date +%Y%m%d_%H%M%S)"; mkdir -p "${PACK_DIR}"
 echo "[texlite] host=$(hostname) job=${SLURM_JOB_ID:-?} PACK_DIR=${PACK_DIR}"
 
 if [ "${EVAL_ATLAS_ONLY:-0}" != 1 ]; then
@@ -46,13 +49,17 @@ record() {   # $1 = scripts dir, $2 = env file, $3 = wrapper, rest = items
     cd "${S}/05_predict"; RUN_JOB_PACK_DIR="${PACK_DIR}" bash "${W}" "${RID}" all "$@" )
 }
 echo "[texlite] ==== PHASE 1: record ===="
-record "${A}" tamia_env_atlas-liver-hcc.sh "${W_OWN}"
+[ "${ATLAS_COMPANIONS_ONLY:-0}" = 1 ] || record "${A}" tamia_env_atlas-liver-hcc.sh "${W_OWN}"
 HCC_ITEMS="t2wi dwi ce-pre ce-art ce-pv ce-del inphase outphase"
+# ATLAS_OWN_ONLY=1 (ssem50, 2026-10-18): atlas own test set only; the companions are predicted later from synced checkpoints
+if [ "${ATLAS_OWN_ONLY:-0}" != 1 ]; then
 record "${AR}/lld-mmri-hcc/5_scripts_lld-mmri-hcc" tamia_env_lld-mmri-hcc_atlascross.sh "${W_CROSS}" ${HCC_ITEMS}
 record "${AR}/liverhccseg/5_scripts_liverhccseg" tamia_env_liverhccseg_atlascross.sh "${W_CROSS}" ce-pre_T1w ce-art_T1w ce-pv_T1w ce-del_T1w
+fi
+NEXP=9; [ "${ATLAS_OWN_ONLY:-0}" = 1 ] && NEXP=3; [ "${ATLAS_COMPANIONS_ONLY:-0}" = 1 ] && NEXP=6
 N=$(grep -c . "${PACK_DIR}/index.tsv" 2>/dev/null || echo 0)
-echo "[texlite] recorded ${N} fold-predict commands (expect 9)"
-[ "${N}" = 9 ] || { echo "[texlite] FAILED: recorded ${N} != 9"; exit 3; }
+echo "[texlite] recorded ${N} fold-predict commands (expect ${NEXP})"
+[ "${N}" = "${NEXP}" ] || { echo "[texlite] FAILED: recorded ${N} != ${NEXP}"; exit 3; }
 
 # ---- 2. worker pool, 3 concurrent tasks per GPU
 echo "[texlite] ==== PHASE 2: predict ===="
@@ -93,7 +100,7 @@ eval_item() {   # $1 pred_dir  $2 gt_dir  $3 eval_dir  $4 item  $5 expected N ca
 export -f eval_item; export EVALUATE_PY PY
 
 # atlas own: flat layout, scratch metrics
-(
+[ "${ATLAS_COMPANIONS_ONLY:-0}" = 1 ] || (
   source "${A}/00_utils/env.sh"; source "${ROOT}/scripts/cluster/tamia_env_atlas-liver-hcc.sh"
   export ROWS_PER_CASE=2
   for f in 0 1 2; do
@@ -121,7 +128,7 @@ companion() {   # $1 name  $2 env file  $3 N  $4 title  rest = items
     echo "[texlite] ${d} metrics -> ${METRICS_ROOT}/atlas_liver_hcc_model/t1w/${CAT}_${RID}"
   ) || bad=1
 }
-if [ "${EVAL_ATLAS_ONLY:-0}" != 1 ]; then
+if [ "${EVAL_ATLAS_ONLY:-0}" != 1 ] && [ "${ATLAS_OWN_ONLY:-0}" != 1 ]; then
 companion lld-mmri-hcc tamia_env_lld-mmri-hcc_atlascross.sh 157 "LLD-MMRI-HCC MRI" ${HCC_ITEMS}
 companion liverhccseg tamia_env_liverhccseg_atlascross.sh 14 "LiverHccSeg MRI" ce-pre_T1w ce-art_T1w ce-pv_T1w ce-del_T1w
 fi
