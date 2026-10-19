@@ -19,10 +19,18 @@
 # Probe-only patches (every run, grep-verified before submit): NNUNET_NUM_EPOCHS=25, nnUNet_wandb_enabled=0,
 #   --disable_checkpointing, post-training validation skipped (train_noval.py), results in a THROWAWAY base
 #   ${LAT}/results/<cluster>/<task>/ (never the real results tree). Fold 0, real training data.
+# P3 (added 2026-10-19, `record3`): baseline | pa_noauglab | ad_rep2 | pa_matched, one whole node per task.
+#   pa_noauglab = PA without the AugLab pipeline: the ablation ladder's real-fill rung (rung 5, "PALETTE alone",
+#                 transform_params_gpu_v26_6_2_synth_spatialDA_train050.json = PALETTE p=0.5 + flip + nnU-Net rotation/
+#                 scaling), recorded through the dataset's rung-5 val000 wrapper (last ROWS field). A DualVal trainer in
+#                 the recorded command (chaos t1in 04_48) becomes <X>AugLabDefault + val json cleared, as for pa.
+#                 nnUNet_n_proc_DA / nnUNet_compile = the baseline's of the same pack (ratio pa_noauglab / baseline).
+#   pa_matched  = as in P2, matched to ad_rep2 (ratio pa_matched / ad_rep2 re-measured on the P3 node).
 # healthy-spine-tum is not measurable (externally computed results, no data / train pipeline in this repo).
 # pansegdata is not staged on TamIA (no data, no trainer shim in TamIA's venv) -> its packs run on Vulcan L40S.
 #
-#   bash scripts/cluster/latency_probe/launch.sh record [TASK...]    # record + patch + verify (no submit)
+#   bash scripts/cluster/latency_probe/launch.sh record [TASK...]    # record + patch + verify P1/P2 (no submit)
+#   bash scripts/cluster/latency_probe/launch.sh record3 [TASK...]   # same for P3 (PA-No-Auglab pack)
 #   bash scripts/cluster/latency_probe/launch.sh submit [TASK...]    # submit the recorded packs (1 whole-node job each)
 #   bash scripts/cluster/latency_probe/launch.sh cleanup             # delete the throwaway results once report.sh collected
 # Report: bash scripts/cluster/latency_probe/report.sh  (see its header).
@@ -46,18 +54,19 @@ CFG_SEM=transform_params_gpu_default01-23_Synthseg_EM.json
 CFG_SRC=transform_params_gpu_srcsm_semrandconv.json
 CFG_PA=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2GPUTransform_train050.json
 CFG_VAL=transform_params_gpu_VALsynthonly_ImageContrastV26_6_2GPUTransform.json
+CFG_NOAUG=transform_params_gpu_v26_6_2_synth_spatialDA_train050.json
 
-# task|cluster|scripts dir|tamia env|contrast|baseline|auglab_default|synthseg_EM|srcsm|PA source|PA source is DualVal (1/0)|DualVal wrapper (- = none)|trainer: baseline|trainer: auglab|trainer: PA|trainer: DualVal
+# task|cluster|scripts dir|tamia env|contrast|baseline|auglab_default|synthseg_EM|srcsm|PA source|PA source is DualVal (1/0)|DualVal wrapper (- = none)|trainer: baseline|trainer: auglab|trainer: PA|trainer: DualVal|PA-No-Auglab wrapper (ladder rung 5, real fill)
 ROWS=(
-"brats|tamia|$T/brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma|tamia_env.sh|t1n|04_19_train_t1n_baseline.sh|04_21_train_t1n_auglab_default.sh|04_22_train_t1n_synthseg_EM.sh|04_26_train_t1n_srcsm.sh|04_28_train_t1n_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerBraTS2024GliomaT1nBaseline|nnUNetTrainerBraTS2024GliomaAugLabDefault|nnUNetTrainerBraTS2024GliomaAugLabDefault|-"
-"openms|tamia|$T/brain_ms/open-ms/5_scripts_open-ms|tamia_env_openms.sh|flair|04_01_train_baseline.sh|04_04_train_auglab_default.sh|04_02_train_synthseg_EM.sh|04_20_train_srcsm.sh|04_22_train_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerOpenMSBaseline|nnUNetTrainerOpenMSAugLabDefault|nnUNetTrainerOpenMSAugLabDefault|-"
-"chaos|tamia|$T/abdomen_healthy/chaos/5_scripts_chaos|tamia_env_chaos.sh|t1in|04_33_train_t1in_baseline.sh|04_35_train_t1in_auglab_default.sh|04_36_train_t1in_synthseg_EM.sh|04_42_train_t1in_srcsm.sh|04_09_train_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerCHAOSBaseline|nnUNetTrainerCHAOSAugLabDefault|nnUNetTrainerCHAOSAugLabV26_6_2|-"
-"onharmony|tamia|$T/brain_healthy/on-harmony/5_scripts_on-harmony|tamia_env_onharmony.sh|T1w|04_07_train_t1w_baseline.sh|04_11_train_t1w_auglab_default.sh|04_09_train_t1w_synthseg_EM.sh|04_20_train_t1w_srcsm.sh|04_22_train_t1w_auglabAug_v26_6_2_train050_val000.sh|0|04_26_train_t1w_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerOnHarmonyBaseline|nnUNetTrainerOnHarmonyAugLabDefault|nnUNetTrainerOnHarmonyAugLabDefault|nnUNetTrainerOnHarmonyAugLabDualVal"
-"ispy2|tamia|$T/breast_cancer/ispy2/5_scripts_ispy2|tamia_env_ispy2.sh|t1wce|04_01_train_t1wce_baseline.sh|04_02_train_t1wce_auglab_default.sh|04_04_train_t1wce_synthseg_EM.sh|04_05_train_t1wce_srcsm.sh|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|1|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerISPY2Baseline|nnUNetTrainerISPY2AugLabDefault|nnUNetTrainerISPY2AugLabDefault|nnUNetTrainerISPY2AugLabDualVal"
-"toothfairy2|tamia|$T/mandible_healthy/toothfairy2/5_scripts_toothfairy2|tamia_env_toothfairy2.sh|cbct|04_01_train_baseline.sh|04_02_train_auglab_default.sh|04_04_train_synthseg_EM.sh|04_05_train_srcsm.sh|04_06_train_auglabAug_v26_6_2_dualval.sh|1|04_06_train_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerToothFairy2Baseline|nnUNetTrainerToothFairy2AugLabDefault|nnUNetTrainerToothFairy2AugLabDefault|nnUNetTrainerToothFairy2AugLabDualVal"
-"pelvic|tamia|$T/pelvis_healthy/totalseg-pelvic/5_scripts_totalseg-pelvic|tamia_env_totalseg-pelvic.sh|ct|04_01_train_ct_baseline.sh|04_02_train_ct_auglab_default.sh|04_04_train_ct_synthseg_EM.sh|04_05_train_ct_srcsm.sh|04_06_train_ct_auglabAug_v26_6_2_dualval.sh|1|04_06_train_ct_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerTotalsegPelvicBaseline|nnUNetTrainerTotalsegPelvicAugLabDefault|nnUNetTrainerTotalsegPelvicAugLabDefault|nnUNetTrainerTotalsegPelvicAugLabDualVal"
-"atlas|tamia|${AD_DIR}|tamia_env_atlas-liver-hcc.sh|t1w|04_01_train_baseline.sh|04_02_train_auglab_default.sh|04_04_train_synthseg_EM.sh|04_05_train_srcsm.sh|04_06_train_auglabAug_v26_6_2_dualval.sh|1|04_06_train_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerAtlasLiverHCCBaseline|nnUNetTrainerAtlasLiverHCCAugLabDefault|nnUNetTrainerAtlasLiverHCCAugLabDefault|nnUNetTrainerAtlasLiverHCCAugLabDualVal"
-"pansegdata|vulcan|$T/pancreas_disease/pansegdata/5_scripts_pansegdata|-|t1wce|04_01_train_t1wce_baseline.sh|04_02_train_t1wce_auglab_default.sh|04_04_train_t1wce_synthseg_EM.sh|04_05_train_t1wce_srcsm.sh|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|1|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerPANSEGDATABaseline|nnUNetTrainerPANSEGDATAAugLabDefault|nnUNetTrainerPANSEGDATAAugLabDefault|nnUNetTrainerPANSEGDATAAugLabDualVal"
+"brats|tamia|$T/brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma|tamia_env.sh|t1n|04_19_train_t1n_baseline.sh|04_21_train_t1n_auglab_default.sh|04_22_train_t1n_synthseg_EM.sh|04_26_train_t1n_srcsm.sh|04_28_train_t1n_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerBraTS2024GliomaT1nBaseline|nnUNetTrainerBraTS2024GliomaAugLabDefault|nnUNetTrainerBraTS2024GliomaAugLabDefault|-|04_89_train_t1n_v26_6_2_train050_val000.sh"
+"openms|tamia|$T/brain_ms/open-ms/5_scripts_open-ms|tamia_env_openms.sh|flair|04_01_train_baseline.sh|04_04_train_auglab_default.sh|04_02_train_synthseg_EM.sh|04_20_train_srcsm.sh|04_22_train_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerOpenMSBaseline|nnUNetTrainerOpenMSAugLabDefault|nnUNetTrainerOpenMSAugLabDefault|-|04_26_train_v26_6_2_train050_val000.sh"
+"chaos|tamia|$T/abdomen_healthy/chaos/5_scripts_chaos|tamia_env_chaos.sh|t1in|04_33_train_t1in_baseline.sh|04_35_train_t1in_auglab_default.sh|04_36_train_t1in_synthseg_EM.sh|04_42_train_t1in_srcsm.sh|04_09_train_auglabAug_v26_6_2_train050_val000.sh|0|-|nnUNetTrainerCHAOSBaseline|nnUNetTrainerCHAOSAugLabDefault|nnUNetTrainerCHAOSAugLabV26_6_2|-|04_48_train_t1in_v26_6_2.sh"
+"onharmony|tamia|$T/brain_healthy/on-harmony/5_scripts_on-harmony|tamia_env_onharmony.sh|T1w|04_07_train_t1w_baseline.sh|04_11_train_t1w_auglab_default.sh|04_09_train_t1w_synthseg_EM.sh|04_20_train_t1w_srcsm.sh|04_22_train_t1w_auglabAug_v26_6_2_train050_val000.sh|0|04_26_train_t1w_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerOnHarmonyBaseline|nnUNetTrainerOnHarmonyAugLabDefault|nnUNetTrainerOnHarmonyAugLabDefault|nnUNetTrainerOnHarmonyAugLabDualVal|04_53_train_t1w_v26_6_2_train050_val000.sh"
+"ispy2|tamia|$T/breast_cancer/ispy2/5_scripts_ispy2|tamia_env_ispy2.sh|t1wce|04_01_train_t1wce_baseline.sh|04_02_train_t1wce_auglab_default.sh|04_04_train_t1wce_synthseg_EM.sh|04_05_train_t1wce_srcsm.sh|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|1|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerISPY2Baseline|nnUNetTrainerISPY2AugLabDefault|nnUNetTrainerISPY2AugLabDefault|nnUNetTrainerISPY2AugLabDualVal|04_30_train_t1wce_v26_6_2_train050_val000.sh"
+"toothfairy2|tamia|$T/mandible_healthy/toothfairy2/5_scripts_toothfairy2|tamia_env_toothfairy2.sh|cbct|04_01_train_baseline.sh|04_02_train_auglab_default.sh|04_04_train_synthseg_EM.sh|04_05_train_srcsm.sh|04_06_train_auglabAug_v26_6_2_dualval.sh|1|04_06_train_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerToothFairy2Baseline|nnUNetTrainerToothFairy2AugLabDefault|nnUNetTrainerToothFairy2AugLabDefault|nnUNetTrainerToothFairy2AugLabDualVal|04_17_train_cbct_v26_6_2_train050_val000.sh"
+"pelvic|tamia|$T/pelvis_healthy/totalseg-pelvic/5_scripts_totalseg-pelvic|tamia_env_totalseg-pelvic.sh|ct|04_01_train_ct_baseline.sh|04_02_train_ct_auglab_default.sh|04_04_train_ct_synthseg_EM.sh|04_05_train_ct_srcsm.sh|04_06_train_ct_auglabAug_v26_6_2_dualval.sh|1|04_06_train_ct_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerTotalsegPelvicBaseline|nnUNetTrainerTotalsegPelvicAugLabDefault|nnUNetTrainerTotalsegPelvicAugLabDefault|nnUNetTrainerTotalsegPelvicAugLabDualVal|04_27_train_ct_v26_6_2_train050_val000.sh"
+"atlas|tamia|${AD_DIR}|tamia_env_atlas-liver-hcc.sh|t1w|04_01_train_baseline.sh|04_02_train_auglab_default.sh|04_04_train_synthseg_EM.sh|04_05_train_srcsm.sh|04_06_train_auglabAug_v26_6_2_dualval.sh|1|04_06_train_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerAtlasLiverHCCBaseline|nnUNetTrainerAtlasLiverHCCAugLabDefault|nnUNetTrainerAtlasLiverHCCAugLabDefault|nnUNetTrainerAtlasLiverHCCAugLabDualVal|04_14_train_t1w_v26_6_2_train050_val000.sh"
+"pansegdata|vulcan|$T/pancreas_disease/pansegdata/5_scripts_pansegdata|-|t1wce|04_01_train_t1wce_baseline.sh|04_02_train_t1wce_auglab_default.sh|04_04_train_t1wce_synthseg_EM.sh|04_05_train_t1wce_srcsm.sh|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|1|04_06_train_t1wce_auglabAug_v26_6_2_dualval.sh|nnUNetTrainerPANSEGDATABaseline|nnUNetTrainerPANSEGDATAAugLabDefault|nnUNetTrainerPANSEGDATAAugLabDefault|nnUNetTrainerPANSEGDATAAugLabDualVal|04_18_train_t1wce_v26_6_2_train050_val000.sh"
 )
 MINE=(); for r in "${ROWS[@]}"; do IFS='|' read -r t c _ <<<"$r"; [ "$c" = "${CLUSTER}" ] && MINE+=("$t"); done
 SEL="${*:-${MINE[*]}}"
@@ -118,6 +127,14 @@ patch_run() {  # cmdfile slot pa_from_dv ad_da ad_compile
             sub_exact "$body" "^( *export AUGLAB_VAL_PARAMS_GPU_JSON=).*$" "\\1''" valjson || return 1
         fi;;
     esac
+    if [ "$slot" = pa_noauglab ]; then   # rung-5 wrapper; DualVal detected from the recorded trainer, loader = baseline's
+        if grep -qE -- "-tr nnUNetTrainer[A-Za-z0-9_]*AugLabDualVal " "$body"; then
+            sub_exact "$body" "-tr (nnUNetTrainer[A-Za-z0-9_]*)AugLabDualVal " "-tr \\1AugLabDefault " trainer || return 1
+            sub_exact "$body" "^( *export AUGLAB_VAL_PARAMS_GPU_JSON=).*$" "\\1''" valjson || return 1
+        fi
+        sub_exact "$body" "^( *export nnUNet_n_proc_DA=).*$" "\\1${ad_da}" da || return 1
+        sub_exact "$body" "^( *export nnUNet_compile=).*$" "\\1'${ad_c}'" compile || return 1
+    fi
     if [ "$slot" = pa_matched ]; then
         sub_exact "$body" "^( *export nnUNet_n_proc_DA=).*$" "\\1${ad_da}" da || return 1
         sub_exact "$body" "^( *export nnUNet_compile=).*$" "\\1'${ad_c}'" compile || return 1
@@ -130,7 +147,7 @@ patch_run() {  # cmdfile slot pa_from_dv ad_da ad_compile
 
 verify_run() {  # cmdfile slot task gpu -> prints one line, returns 1 on problem
     local cmd="$1" slot="$2" task="$3" gpu="$4" row ebl eau epa edv b ok=OK
-    row="$(row_of "$task")"; IFS='|' read -r _ _ _ _ _ _ _ _ _ _ _ _ ebl eau epa edv <<<"$row"
+    row="$(row_of "$task")"; IFS='|' read -r _ _ _ _ _ _ _ _ _ _ _ _ ebl eau epa edv _ <<<"$row"
     b="$(mktemp -p "${LAT}")"; tail -n +5 "$cmd" > "$b"
     local res tr cfgp cfg vcfg ep wb da cp pre it
     res="$(get nnUNet_results "$b")"; cfgp="$(get AUGLAB_PARAMS_GPU_JSON "$b")"; cfg="${cfgp##*/}"; vcfg="$(get AUGLAB_VAL_PARAMS_GPU_JSON "$b")"
@@ -145,7 +162,8 @@ verify_run() {  # cmdfile slot task gpu -> prints one line, returns 1 on problem
     local etr ecfg evcfg=""
     case "$slot" in
         baseline) etr="$ebl"; ecfg="";;
-        ad|ad_rep) etr="$eau"; ecfg="${CFG_AD}";;
+        ad|ad_rep|ad_rep2) etr="$eau"; ecfg="${CFG_AD}";;
+        pa_noauglab) etr="$eau"; ecfg="${CFG_NOAUG}";;
         sem) etr="$eau"; ecfg="${CFG_SEM}";;
         srcsm) etr="$eau"; ecfg="${CFG_SRC}";;
         pa|pa_matched|pa_rep) etr="$epa"; ecfg="${CFG_PA}";;
@@ -202,8 +220,36 @@ if [ "${MODE}" = record ]; then
   exit 0
 fi
 
+if [ "${MODE}" = record3 ]; then   # P3: baseline | pa_noauglab | ad_rep2 | pa_matched (see header)
+  mkdir -p "${PACKS}" "${RES}"
+  [ -f "${MAN}" ] || printf 'cluster\ttask\tcontrast\tpack\tgpu\tslot\ttrainer\tcfg\tda\tcompile\tresults\tcmd\n' > "${MAN}"
+  TS="$(date +%Y%m%d_%H%M%S)"; bad=0
+  for task in ${SEL}; do
+    row="$(row_of "$task")" || { echo "unknown task $task"; exit 2; }
+    IFS='|' read -r _ cl dir tenv tc wbl wad _ _ wpa fromdv _ _ _ _ _ wnoaug <<<"$row"
+    [ "$cl" = "${CLUSTER}" ] || { echo "[record3] ${task} belongs to ${cl}, this is ${CLUSTER} -- skipped"; continue; }
+    [ -e "${PACKS}/${task}_P3" ] && { echo "[record3] ${task} already recorded -- skipped"; continue; }
+    mkdir -p "${PACKS}/${task}_P3"; echo "== ${task} (${tc}) ${dir}"; pre="lat_${task}_${tc}"
+    c_bl="$(record_run "$task" P3 0 baseline "$wbl" "${pre}_baseline_${TS}" "")" || { echo "$c_bl"; bad=1; continue; }
+    patch_run "$c_bl" baseline "$fromdv" - - || { bad=1; continue; }
+    BL_DA="$(get nnUNet_n_proc_DA <(tail -n +5 "$c_bl"))"; BL_C="$(get nnUNet_compile <(tail -n +5 "$c_bl"))"; BL_C="${BL_C:-0}"
+    c="$(record_run "$task" P3 1 pa_noauglab "$wnoaug" "${pre}_pa_noauglab_val000_${TS}" "")" || { echo "$c"; bad=1; continue; }
+    patch_run "$c" pa_noauglab "$fromdv" "$BL_DA" "$BL_C" || bad=1
+    c_ad="$(record_run "$task" P3 2 ad_rep2 "$wad" "${pre}_ad_rep2_${TS}" "${CFG_AD}")" || { echo "$c_ad"; bad=1; continue; }
+    patch_run "$c_ad" ad_rep2 "$fromdv" - - || { bad=1; continue; }
+    AD_DA="$(get nnUNet_n_proc_DA <(tail -n +5 "$c_ad"))"; AD_C="$(get nnUNet_compile <(tail -n +5 "$c_ad"))"; AD_C="${AD_C:-0}"
+    c="$(record_run "$task" P3 3 pa_matched "$wpa" "${pre}_pa_matched_${TS}" "")" || { echo "$c"; bad=1; continue; }
+    patch_run "$c" pa_matched "$fromdv" "$AD_DA" "$AD_C" || bad=1
+    echo " -- ${task}_P3"; mapfile -t SL < "${PACKS}/${task}_P3/SLOTS"; mapfile -t GP < "${PACKS}/${task}_P3/GPUS"; i=0
+    while IFS=$'\t' read -r cmd _ _ _; do verify_run "$cmd" "${SL[$i]}" "$task" "${GP[$i]}" || bad=1; i=$((i+1)); done < "${PACKS}/${task}_P3/index.tsv"
+    [ "$i" = 4 ] || { echo "   PACK HAS ${i} RUNS (expect 4)"; bad=1; }
+  done
+  [ "$bad" = 0 ] && echo "VERIFY PASSED" || echo "VERIFY FAILED"
+  exit 0
+fi
+
 if [ "${MODE}" = submit ]; then
-  for task in ${SEL}; do for p in P1 P2; do
+  for task in ${SEL}; do for p in ${PACKS_SEL:-P1 P2 P3}; do
     d="${PACKS}/${task}_${p}"; [ -f "$d/index.tsv" ] || { echo "[submit] ${task}_${p}: not recorded"; continue; }
     ls "$d"/pack_*.out >/dev/null 2>&1 && { echo "[submit] ${task}_${p}: already ran/submitted -- skipped"; continue; }
     [ -f "$d/JOBID" ] && { echo "[submit] ${task}_${p}: already submitted ($(cat "$d/JOBID")) -- skipped"; continue; }

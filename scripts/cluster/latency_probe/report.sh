@@ -6,7 +6,9 @@
 # Per run: nnU-Net's own per-epoch "Epoch time: X s" lines from fold_0/training_log_*.txt; epochs 0-4 (warm-up, torch.compile,
 # data-loader start) are skipped and the median + IQR over epochs 5..(PROBE_EPOCHS-1) is reported. Ratios are taken WITHIN a
 # node: x / auglab_default of the same pack; vs baseline directly in P2, and for P1 runs chained through the auglab_default
-# replicate: (x / AD_P1) * (AD_P2 / baseline_P2). Every number is awk/sort only (no Python on login nodes).
+# replicate: (x / AD_P1) * (AD_P2 / baseline_P2). P3 (2026-10-19: baseline | PA-No-Auglab | auglab_default | PA matched on ONE
+# node) gives both headline ratios within one node. Every number is awk/sort only (no Python on login nodes).
+# A collected_* dir from an earlier round (e.g. collected_tamia_20261015 = P1/P2) is rendered next to the current one.
 # Context (not part of the comparison): median epoch time of the production DualVal headline run, fold 0, when its log is on
 # this cluster's scratch (production packs ran 2-3 folds per GPU, so its absolute time is not comparable).
 set -uo pipefail
@@ -111,6 +113,10 @@ render() {
     echo "- **PA val000, matched** = the same with \`nnUNet_n_proc_DA\` and \`nnUNet_compile\` set to auglab_default's values: the fair"
     echo "  ratio for the augmentation cost where the headline OURS wrapper ran DA_WORKERS=0 / compile=0 and the competitors 8 / 1."
     echo "- **DualVal (context)** = the headline DualVal trainer as run for the paper (validates twice per epoch)."
+    echo "- **PA-No-Auglab** (pack P3) = PA without the AugLab pipeline: the ladder's real-fill rung (rung-5 val000 wrapper,"
+    echo "  \`transform_params_gpu_v26_6_2_synth_spatialDA_train050.json\`: PALETTE p=0.5 + flip + nnU-Net rotation/scaling), plain"
+    echo "  single-validation trainer, \`nnUNet_n_proc_DA\` / \`nnUNet_compile\` = the baseline's of the same node. P3 packs baseline,"
+    echo "  PA-No-Auglab, auglab_default and PA matched (DA/compile = auglab_default's) on one node, so both ratios are within-node."
     echo
     echo "| task | contrast | cluster / GPU | method | DA | compile | median s/epoch | IQR | x auglab_default | x baseline | n | median, all 4 running (n) | status |"
     echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
@@ -121,23 +127,50 @@ render() {
         lab["ad"]="auglab_default"; lab["sem"]="synthseg_EM"; lab["srcsm"]="SRCSM"; lab["pa"]="**PA val000**";
         lab["baseline"]="baseline (nnU-Net DA)"; lab["ad_rep"]="auglab_default (replicate)"; lab["pa_matched"]="**PA val000, matched DA/compile**";
         lab["pa_rep"]="PA val000 (replicate)"; lab["dualval"]="PA DualVal trainer (context)";
+        lab["pa_noauglab"]="**PA-No-Auglab (rung 5), DA/compile = baseline**"; lab["ad_rep2"]="auglab_default";
         so["P1","ad"]=1; so["P1","sem"]=2; so["P1","srcsm"]=3; so["P1","pa"]=4; so["P2","baseline"]=5; so["P2","ad_rep"]=6; so["P2","pa_matched"]=7; so["P2","pa_rep"]=8; so["P2","dualval"]=8;
+        so["P3","baseline"]=9; so["P3","pa_noauglab"]=10; so["P3","ad_rep2"]=11; so["P3","pa_matched"]=12;
         for (t=1;t<=nt;t++) { k=order[t]
-          for (s=1;s<=8;s++) for (i=1;i<=n;i++) { split(row[i], f, "\t"); if (f[2]!=k || so[f[4],f[6]]!=s) continue
+          for (s=1;s<=12;s++) for (i=1;i<=n;i++) { split(row[i], f, "\t"); if (f[2]!=k || so[f[4],f[6]]!=s) continue
             m=f[18]; ad1=med[k,"P1","ad"]; ad2=med[k,"P2","ad_rep"]; bl=med[k,"P2","baseline"]
             ra="NA"; rb="NA"
             if (m!="NA") {
-              if (f[4]=="P1") { if (ad1!="NA" && ad1>0) ra=sprintf("%.2f", m/ad1); if (ad1!="NA" && ad1>0 && ad2!="NA" && bl!="NA" && bl>0) rb=sprintf("%.2f*", m/ad1*ad2/bl) }
+              if (f[4]=="P3") { a3=med[k,"P3","ad_rep2"]; b3=med[k,"P3","baseline"]
+                if (a3!="" && a3!="NA" && a3>0) ra=sprintf("%.2f", m/a3); if (b3!="" && b3!="NA" && b3>0) rb=sprintf("%.2f", m/b3) }
+              else if (f[4]=="P1") { if (ad1!="NA" && ad1>0) ra=sprintf("%.2f", m/ad1); if (ad1!="NA" && ad1>0 && ad2!="NA" && bl!="NA" && bl>0) rb=sprintf("%.2f*", m/ad1*ad2/bl) }
               else { if (ad2!="NA" && ad2>0) ra=sprintf("%.2f", m/ad2); if (bl!="NA" && bl>0) rb=sprintf("%.2f", m/bl) } }
             gn=f[13]; sub(/NVIDIA /,"",gn); sub(/ 80GB HBM3/,"",gn)
             iqr=(f[19]=="NA")? "NA" : f[19] "-" f[20]
             printf "| %s | %s | %s %s (%s) | %s | %s | %s | %s | %s | %s | %s | %s | %s (%s) | %s |\n", k, f[3], f[1], gn, f[4], lab[f[6]], f[9], f[10], m, iqr, ra, rb, f[17], f[23], f[22], f[21] } } }'
     echo
-    echo "\\* chained through the auglab_default replicate of P2 (P1 runs and the baseline sit on different nodes)."
+    echo "\\* chained through the auglab_default replicate of P2 (P1 runs and the baseline sit on different nodes). P3 ratios are"
+    echo "within the P3 node (x / its auglab_default, x / its baseline)."
     echo "\"all 4 running\" = the same statistic restricted to epochs that ended before the first run of the pack finished (after that,"
     echo "the slower runs share the node's CPUs with fewer neighbours); NA = no timed epoch inside that window."
     echo
-    echo "## Summary per task (ratios of median s/epoch; PA = PA val000)"
+    echo "## All latencies (median s/epoch; pack in brackets) and the two headline ratios"
+    echo
+    echo "Plain nnU-Net, Auglab, PA-No-Auglab and PA from P3 (one node per task); SynthSeg-EM and SRCSM from P1 (a second node of"
+    echo "the same class, same task). PA = PA val000 with auglab_default's DA/compile; PA-No-Auglab with the baseline's. Ratios within"
+    echo "the P3 node. pansegdata ran on Vulcan L40S: its absolute times do not compare with the H100 rows, its ratios do."
+    echo "Last row: geometric mean of the ratios over the tasks that have them."
+    echo
+    echo "| task | GPU | Plain nnU-Net | SynthSeg-EM | SRCSM | Auglab | PA-No-Auglab | PA | PA / Auglab | PA-No-Auglab / Plain nnU-Net | PA / Auglab (P2, earlier node) |"
+    echo "|---|---|---|---|---|---|---|---|---|---|---|"
+    cat "${F[@]}" | awk -F'\t' '$1!="cluster" { k=$2; m[k,$4,$6]=$18; if ($4=="P3" || !(k in g)) g[k]=$13; if (!(k in s)) {s[k]=1; o[++n]=k} }
+      function ok(x) { return (x!="" && x!="NA" && x>0) }
+      function c(x, p) { return ok(x) ? sprintf("%.2f (%s)", x, p) : "NA" }
+      function r(a,b) { return (ok(a) && ok(b)) ? a/b : "NA" }
+      function fmt(x) { return (x=="NA") ? "NA" : sprintf("%.2f", x) }
+      END { for (i=1;i<=n;i++) { k=o[i]; gn=g[k]; sub(/NVIDIA /,"",gn); sub(/ 80GB HBM3/,"",gn)
+          v1=r(m[k,"P3","pa_matched"], m[k,"P3","ad_rep2"]); v2=r(m[k,"P3","pa_noauglab"], m[k,"P3","baseline"]); v3=r(m[k,"P2","pa_matched"], m[k,"P2","ad_rep"])
+          if (v1!="NA") {L1+=log(v1); N1++}; if (v2!="NA") {L2+=log(v2); N2++}; if (v3!="NA") {L3+=log(v3); N3++}
+          printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", k, gn, c(m[k,"P3","baseline"],"P3"), c(m[k,"P1","sem"],"P1"), c(m[k,"P1","srcsm"],"P1"),
+            c(m[k,"P3","ad_rep2"],"P3"), c(m[k,"P3","pa_noauglab"],"P3"), c(m[k,"P3","pa_matched"],"P3"), fmt(v1), fmt(v2), fmt(v3) }
+        printf "| **geometric mean** | | | | | | | | %s | %s | %s |\n", (N1 ? sprintf("%.2f (n=%d)", exp(L1/N1), N1) : ""),
+          (N2 ? sprintf("%.2f (n=%d)", exp(L2/N2), N2) : ""), (N3 ? sprintf("%.2f (n=%d)", exp(L3/N3), N3) : "") }'
+    echo
+    echo "## Summary per task, packs P1/P2 (ratios of median s/epoch; PA = PA val000)"
     echo
     echo "PA matched = DA workers / compile flag of auglab_default (the augmentation cost alone). Competitor ratios for the P1 methods"
     echo "(SRCSM, synthseg_EM) are taken through auglab_default: (PA_matched / AD_P2) / (X / AD_P1). Last row: geometric mean over tasks."
