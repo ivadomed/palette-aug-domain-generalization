@@ -15,7 +15,7 @@ per label:
      "v26_6_2 real fill") per label, Holm-corrected across the 4-label family
      within each direction -- the "is the causal effect uniform" view.
 
-Reuses load_case_means-style CSV loading and stat_tests.py's wilcoxon_p/holm
+Reuses load_case_means-style CSV loading, the paper's _signflip and stat_tests.py's holm
 -- no new statistical machinery. Predictions for T1n's official ablation
 rungs were already cleaned off disk (see FINDINGS below); this script reads
 metrics (eval_all.csv) only, which still exist for both directions.
@@ -35,7 +35,12 @@ import numpy as np
 DATASET_ROOT = Path(__file__).resolve().parents[2]   # benchmark/02_tasks/brain_tumor/brats2024-glioma
 REPO_ROOT = DATASET_ROOT.parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "benchmark/00_commun_scripts/00_00_utils"))
-from stat_tests import holm, wilcoxon_p, fmt_p  # noqa: E402
+from stat_tests import holm, fmt_p  # noqa: E402
+# The paper's texture-step test (2026-10-19; was a paired Wilcoxon): patient-level sign-flip, two-sided, exact for
+# <= 20 patients else 1e5 random flips (seed 20261015) -- the very _signflip the paper's texture-step tables use.
+sys.path.insert(0, str(REPO_ROOT / "paper/scripts"))
+sys.path.insert(0, str(REPO_ROOT / "benchmark/00_commun_scripts/00_03_evaluate"))
+from compute_flatfill_decomposition import _signflip  # noqa: E402
 from eval_folds import filter_fold_dirs  # noqa: E402  (3-fold policy cap, same as every shared loader)
 
 METRICS_ROOT = DATASET_ROOT / "8_results_brats2024-glioma/02_metrics/brats2024_glioma_model"
@@ -115,7 +120,7 @@ for lab in LABELS:
     lines.append(f"| {lab} | " + " | ".join(f"{v:.1f}" for v in vals) + f" | {gap:+.1f} |")
 
 lines += ["", f"## 2. Fill step effect ({'flat fill' if BASE_ARM == 'flat' else '+voronoi noise fill'} -> v26_6_2 real fill), per label",
-          "", "Holm-corrected paired Wilcoxon, family = the 4 labels within each direction "
+          "", "Holm-corrected two-sided patient-level sign-flip test (the paper's texture-step test; one stratum = this direction's held-out contrast, unit = patient), family = the 4 labels within each direction "
           "(same test family size/logic as `compute_fillswap_per_contrast.py`'s per-contrast test).",
           "", "| label | " + " | ".join(name for name, *_ in DIRECTIONS) + " |",
           "|---|" + "---|" * len(DIRECTIONS)]
@@ -131,7 +136,8 @@ for name, real_dir, voronoi_dir, contrast in DIRECTIONS:
         common = sorted(set(c_real) & set(c_noise))
         x = np.array([c_noise[k] for k in common])
         y = np.array([c_real[k] for k in common])
-        p = wilcoxon_p(x, y) if len(x) else float("nan")
+        r = _signflip([dict(w=1.0, cases={k: (c_noise[k], c_real[k]) for k in common}, unit=lambda k: k)], "dice", True) if common else None
+        p = r["p"] if r else float("nan")
         d = float(np.mean(y) - np.mean(x)) * 100 if len(x) else float("nan")
         pvals.append(p)
         deltas.append(d)
