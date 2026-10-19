@@ -5,6 +5,8 @@
 # key = rung-4 RUN_ID, value = flat-fill RUN_ID (trained by scripts/cluster/rung45_flat/; atlas by its own 04_16).
 # The engine substitutes the RUN_ID inside the rung-4 run key (keeping ablations/ prefixes and per-source
 # run_subdirs) and refuses to run if the flat key does not resolve in every source where rung 4 does.
+# A ladder whose rung 4 is NOT registered raises (never a silent 7-rung ladder); a rung-4 RUN_ID with genuinely no
+# flat-fill run goes under no_flat_rung: (list, suffix match) instead.
 # Disable for one run with LADDER_FLAT_RUNG=0 (reproduces the 7-rung ladders).
 flat_rungs:
   brats2024-glioma_t1c_baseline_kmeans_label_remap_voronoi_lblvor_20261007_170728: brats2024-glioma_t1c_baseline_kmeans_label_remap_voronoi_flatfill_20261008_190758
@@ -26,3 +28,5 @@ flat_rungs:
   totalseg-pelvic_ct_baseline_kmeans_label_remap_voronoi_lblvor_20261007_171504: totalseg-pelvic_ct_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191224
   totalseg-pelvic_mri_baseline_kmeans_label_remap_voronoi_lblvor_20261007_171228: totalseg-pelvic_mri_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191257
   atlas-liver-hcc_t1w_baseline_kmeans_label_remap_voronoi_lblvor_20261008_095133: atlas-liver-hcc_t1w_baseline_kmeans_label_remap_voronoi_flatfill_20261010_073719
+
+no_flat_rung: []

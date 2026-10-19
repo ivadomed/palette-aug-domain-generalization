@@ -215,7 +215,8 @@ def _with_pv_branch(fn):
 # The tested step of the paper is flat fill -> real fill (only the within-region texture term differs). Ladders
 # whose noise-fill rung is registered in ladder_flat_rung.yaml get the flat rung inserted just before the real-fill
 # rung, so _find_fill_swap_idx tests flat -> real and every other adjacent step (incl. noise -> flat) is tested by
-# _rung_step_significance as usual. Default ON; LADDER_FLAT_RUNG=0 reproduces the 7-rung ladders.
+# _rung_step_significance as usual. Default ON; LADDER_FLAT_RUNG=0 reproduces the 7-rung ladders. An unregistered
+# rung 4 RAISES (no silent 7-rung ladder) unless its RUN_ID is listed under no_flat_rung: in the yaml.
 FLAT_RUNG_REGISTRY = Path(__file__).with_name("ladder_flat_rung.yaml")
 FLAT_RUNG_LABEL = "flat fill (rung 4.5)"
 FLAT_RUNG_INGREDIENT = "same partition, flat region-mean fill (no noise, no texture)"
@@ -245,6 +246,14 @@ def _with_flat_rung(fn):
             hits = [(a, b) for a, b in reg.items() if prev_key.endswith(str(a))]
             if len(hits) > 1:
                 raise ValueError(f"ladder_flat_rung.yaml: {len(hits)} entries match {prev_key}")
+            if not hits:
+                optout = [str(x) for x in ((yaml.safe_load(FLAT_RUNG_REGISTRY.read_text()) or {}).get("no_flat_rung") or [])]
+                if not any(prev_key.endswith(x) for x in optout):
+                    raise ValueError(
+                        f"ladder {kw.get('task_name')!r} / {kw.get('contrast_label')!r}: rung-4 run {prev_key!r} is not "
+                        f"registered in {FLAT_RUNG_REGISTRY.name}, so this ladder would silently come out WITHOUT the flat-fill "
+                        f"rung. Add '<rung-4 RUN_ID>: <flat RUN_ID>' under flat_rungs:, or list the rung-4 RUN_ID under "
+                        f"no_flat_rung: (no flat-fill run exists), or set LADDER_FLAT_RUNG=0 to reproduce a 7-rung ladder.")
             if hits:
                 flat_key = prev_key[: -len(hits[0][0])] + str(hits[0][1])
                 missing = [str(root) for root, src in _flat_rung_sources(kw)
