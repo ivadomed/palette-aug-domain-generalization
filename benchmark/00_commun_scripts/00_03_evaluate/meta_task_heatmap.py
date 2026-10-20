@@ -15,15 +15,15 @@ Each task's config is one of the existing `*_combined_01_results.yaml` files (ch
 on-harmony/brats2024-glioma/open-ms) — reused as-is, not re-specified, so this script
 can never drift from the per-dataset combined tables it's built on top of.
 
-Statistics: for the significance column, each TASK contributes ONE stratum (unlike
-significance_from_config.py / combined_modality_summary.py, which stratify by
-contrast) — its stratum array is every one of that task's held-out cases' paired
-diffs (ref − competitor), pooled across the task's tested contrasts AND its two
-training modalities. Feeding these 4 (one per dataset) arrays into the same macroΔ
-sign-flip test (stat_tests.macro_perm) as elsewhere gives an "ours better" p-value
-with EQUAL WEIGHT PER TASK — matching the `overall` column's equal-weight-per-task
-average, so the test and the table finally agree at this level too. Holm-corrected
-across all non-ref competitors.
+Statistics (2026-10-20): the cross-task column is a SETTING-level test. A setting =
+one training modality of one task; its score is the task's `all` estimand restricted
+to that modality's models (setting_value). For each competitor, `settings won` counts
+the settings where the ref scores better, and p is the one-sided exact sign test over
+settings (stat_tests.sign_test), Holm-corrected across the non-ref competitors.
+Patients are the unit only WITHIN a task (the ★/▼ marks: task_design_entries +
+macro_perm_design, one task at a time). A patient-pooled test across tasks (the
+pre-2026-10-20 column) is deliberately no longer available: it answers a different
+question and was far too optimistic.
 
 Meta-config YAML:
   title: "Cross-dataset — task-level heatmap (7-method suite)"
@@ -74,7 +74,7 @@ import yaml
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent / "00_00_utils"))
-from stat_tests import holm, macro_perm, macro_perm_design  # noqa: E402
+from stat_tests import holm, macro_perm_design, sign_test  # noqa: E402
 
 # Reuse the exact per-modality pooling machinery — one implementation, no drift
 # from the per-dataset combined_contrasts tables this rolls up.
@@ -202,72 +202,62 @@ def task_method_value(modalities: list, method_key: str, metric: str,
     return float(np.mean(finite)) if finite else float("nan")
 
 
-def task_pooled_diffs(modalities: list, ref_key: str, comp_key: str, metric: str,
-                      contrast_groups: dict = None) -> np.ndarray:
-    """One task's stratum array for the top-level sign-flip test: every held-out
-    case's paired diff (ref − comp), pooled across the task's tested contrasts
-    AND its two training modalities (case tags already carry the modality, see
-    combined_modality_summary.load_combined_cases).
-
-    contrast_groups (optional): resolve each top-level group via
-    aggregate_from_config.resolve_group (fed by the label-preserving loader so
-    a group like chaos's "CT" gets its per-organ-then-cross-organ treatment),
-    then concatenate every group's array into one task stratum — preserves
-    "one stratum per TASK" (this function's whole point) while fixing the same
-    vote-imbalance the per-dataset headline tests already got fixed for."""
-    ref_raw = _cms.load_combined_cases_raw(modalities, ref_key, metric)
-    comp_raw = _cms.load_combined_cases_raw(modalities, comp_key, metric)
-    if not contrast_groups:      # flat task: each raw contrast column is its own (trivial) group
-        contrast_groups = {c: c for c in sorted(set(ref_raw) | set(comp_raw))}
-    # resolve_group yields one element PER PATIENT within a group (the two training
-    # modalities' scores of the same test patient merged, hierarchical groups no longer
-    # collapsed to organ means) — 2026-09-21 fix, see stat_tests.py's design primitives.
-    # NOT covered here: the same patient recurring in several contrasts of a task is still
-    # several elements of this pooled stratum (the per-dataset tables do join those).
-    pooled = [_agg.resolve_group(g, ref_raw, comp_raw) for g in contrast_groups.values()]
-    pooled = [p for p in pooled if len(p)]
-    return np.concatenate(pooled) if pooled else np.array([])
-
-
 def task_design_entries(modalities: list, ref_key: str, comp_key: str, metric: str,
-                        contrast_groups: dict, tidx: int) -> list:
-    """One task's contribution to the cross-task design-based sign-flip test.
+                        contrast_groups: dict) -> list:
+    """ONE task's design for its WITHIN-task patient-level sign-flip test
+    (macro_perm_design(entries, 1, ...)); the ★/▼ marks.
 
-    Builds the task's design with the SAME aggregate_from_config.build_design the
-    per-task combined tables use (patient-level units: a patient flips as ONE
-    unit across every contrast group and every training modality it appears in),
-    then rescales each entry by 1/K_task so the task contributes its own macroΔ.
-    Summed over tasks and divided by T (macro_perm_design's K) this is the mean
-    over tasks of each task's displayed `all` difference -- equal weight per task,
-    equal weight per contrast group within it.
-
-    Replaces task_pooled_diffs + macro_perm (2026-10-02). That path merged a
-    patient only WITHIN one contrast group, so a patient recurring across a task's
-    contrasts (ON-Harmony: 8 patients x 6 contrasts) entered the headline test as
-    several independent units, and it used macro_perm's plain normal tail, which
-    stat_tests.py documents as badly conservative for designs like CHAOS's. It
-    also pooled cases flat within a task, so the test weighted contrasts by case
-    count while the displayed `all` value weights them equally."""
+    Same aggregate_from_config.build_design as the per-task combined tables
+    (a patient flips as ONE unit across every contrast group and training modality
+    it appears in), entries rescaled by 1/K so the statistic is the task's
+    displayed `all` difference. Every entry is in stratum 0: since 2026-10-20 there
+    is no task index, so designs of several tasks cannot be stacked into one
+    patient-pooled cross-task test. Across tasks, use cross_setting_test."""
     ref_raw = _cms.load_combined_cases_raw(modalities, ref_key, metric)
     comp_raw = _cms.load_combined_cases_raw(modalities, comp_key, metric)
     groups = contrast_groups or {c: c for c in sorted(set(ref_raw) | set(comp_raw))}
     entries, K = _agg.build_design(groups, ref_raw, comp_raw, _agg.DEFAULT_UNIT_SCOPE)
     if not K:
         return []
-    # namespace leaves and units by task so two tasks can never share a unit
-    return [(tidx, (tidx, leaf), (tidx, unit), c / K) for _, leaf, unit, c in entries]
+    return [(0, leaf, unit, c / K) for _, leaf, unit, c in entries]
+
+
+def setting_value(task: dict, modality: dict, method_key: str, metric: str) -> float:
+    """One SETTING's score: the task's `all` estimand restricted to one training
+    modality's models (same contrast groups, external cohorts and, in OOD-only mode,
+    the same exclusions). NaN if the method has no run for that modality."""
+    if not modality["runs"].get(method_key):
+        return float("nan")
+    return task_method_value([modality], method_key, metric, task["contrast_groups"])
+
+
+def setting_labels(tasks: list) -> list:
+    return [f"{t['name']} {m['name']}" for t in tasks for m in t["modalities"]]
+
+
+def setting_scores(tasks: list, method_key: str, metric: str) -> list:
+    """Scores of one method on every setting of every task, in setting_labels order."""
+    return [setting_value(t, m, method_key, metric) for t in tasks for m in t["modalities"]]
+
+
+def cross_setting_test(tasks: list, a_key: str, b_key: str, metric: str,
+                       two_sided: bool = False) -> tuple:
+    """THE cross-task comparison: exact sign test over settings that `a_key` scores
+    better than `b_key` (one-sided unless two_sided). -> (wins, n non-tied, ties, p)."""
+    return sign_test(setting_scores(tasks, a_key, metric), setting_scores(tasks, b_key, metric),
+                     metric == "dice", two_sided)
 
 
 def _per_task_sig(tasks, ref_key, competitors, metric, higher_better):
     """{competitor: [(verdict, p_win, p_lose) per task]} -- each task is its own single
-    stratum (same design/patient-level units as the cross-task test), Holm across the
+    stratum (patient-level units, within the task only), Holm across the
     competitors within the task, separately per direction."""
     out = {c: [] for c in competitors}
     for i, t in enumerate(tasks):
         pw, pl = [], []
         for comp in competitors:
             ents = task_design_entries(t["modalities"], ref_key, comp, metric,
-                                       t["contrast_groups"], 0)
+                                       t["contrast_groups"])
             if ents:
                 pw.append(macro_perm_design(ents, 1, higher_better)[2])
                 pl.append(macro_perm_design(ents, 1, not higher_better)[2])
@@ -333,9 +323,11 @@ def main():
         "`combined_contrasts/01_results_summary.md`). `overall` = equal-weight average "
         f"across the {len(tasks)} tasks that have data for that method (a task missing "
         "for a given method — e.g. no HD95, or a method not run on that dataset — is "
-        "excluded, not counted as 0). **Bold** = best per column. `sig. vs ref` = Holm-corrected "
-        f"one-sided (ref better) macroΔ p-value of `{_agg._display_key(ref_key)}` vs that "
-        "row, equal weight per TASK (blank on the ref's own row); **bold** = p < 0.05. "
+        "excluded, not counted as 0). **Bold** = best per column. Across tasks the unit is the "
+        "SETTING (one training modality of one task): `settings won by ref` = settings where "
+        f"`{_agg._display_key(ref_key)}` scores better than that row, out of the non-tied settings "
+        "both were run on; `sig. vs ref` = one-sided exact sign test over those settings, "
+        "Holm-corrected across competitors (blank on the ref's own row); **bold** = p < 0.05. "
         "**Per task:** ★ = Ours significantly better than that row *within that task* "
         "(Holm over the competitors, one-sided p<0.05), ▼ = significantly worse, none = n.s.; "
         "last row counts the ★. The val100 mirror is listed last for reference only — "
@@ -349,6 +341,7 @@ def main():
 
     matrices = {}
     sig_by_metric = {}
+    won_by_metric = {}
     task_sig = {}
     for metric, heading, prec in (("dice", "Dice ↑", 4), ("hd95", "HD95 mm ↓", 2)):
         mat = np.full((len(method_order), len(cols)), np.nan)
@@ -364,28 +357,20 @@ def main():
         higher_better = metric == "dice"
         competitors = [k for k in method_order[:n_analysis] if k != ref_key]
         task_sig[metric] = _per_task_sig(tasks, ref_key, competitors, metric, higher_better)
-        p1s = []
-        for comp in competitors:
-            per_task = [task_design_entries(t["modalities"], ref_key, comp, metric,
-                                            t["contrast_groups"], i)
-                        for i, t in enumerate(tasks)]
-            present = [e for e in per_task if e]
-            # re-index strata densely over the tasks this pair actually shares
-            # (e.g. Spine has no SRCSM run, no HD95): T = tasks with data.
-            entries = [(j, leaf, unit, c) for j, ents in enumerate(present)
-                       for _, leaf, unit, c in ents]
-            p1s.append(macro_perm_design(entries, len(present), higher_better)[2]
-                       if present else float("nan"))
-        hp = holm(p1s)
+        # cross-task: settings are the unit (sign test over settings, Holm across competitors)
+        st = {comp: cross_setting_test(tasks, ref_key, comp, metric) for comp in competitors}
+        hp = holm([st[c][3] for c in competitors])
         sig_by_metric[metric] = {ref_key: float("nan"), **dict(zip(competitors, hp))}
+        won_by_metric[metric] = {c: st[c][:2] for c in competitors}
 
         best = _agg._best_per_col(mat[:n_analysis], metric)
         sig = sig_by_metric[metric]
+        won = won_by_metric[metric]
         ts = task_sig[metric]
         lines += [
             f"## {heading}", "",
-            "| method | " + " | ".join(cols) + " | sig. vs ref |",
-            "|" + "---|" * (len(cols) + 2),
+            "| method | " + " | ".join(cols) + " | settings won by ref | sig. vs ref |",
+            "|" + "---|" * (len(cols) + 3),
         ]
         for i, key in enumerate(method_order):
             cells = []
@@ -397,11 +382,12 @@ def main():
                     s += {"win": " ★", "lose": " ▼"}.get(ts[key][j][0], "")
                 cells.append(s)
             sig_cell = "(ref only)" if key in ref_only else "—" if key == ref_key else _agg._fmt_sig(sig.get(key, float("nan")))
+            won_cell = f"{won[key][0]}/{won[key][1]}" if key in won else ""
             lines.append(f"| {_agg._format_label_md(_agg._display_key(key))} | "
-                         + " | ".join(cells) + f" | {sig_cell} |")
+                         + " | ".join(cells) + f" | {won_cell} | {sig_cell} |")
         wins = [sum(ts[k][j][0] == "win" for k in competitors) for j in range(len(task_names))]
         lines.append("| **Ours sig. wins** | " + " | ".join(f"{w}/{len(competitors)}" for w in wins)
-                     + " | | |")
+                     + " | | | |")
         lines.append("")
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -487,7 +473,7 @@ def _save_heatmaps(matrices, method_order, sig_by_metric, ref_key, cols, out_dir
 
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         wins = [sum(ts[k][j][0] == "win" for k in ts) for j in range(n_data_cols - 1)]
-        ax.set_xlabel("task (dataset)  |  significance vs ref\n★/▼ = Ours sig. better/worse "
+        ax.set_xlabel("task (dataset)  |  sig. vs ref = sign test over settings (Holm)\n★/▼ = Ours sig. better/worse "
                       "within task (Holm, p<0.05).  Ours sig. wins per task: "
                       + ", ".join(f"{w}/{len(ts)}" for w in wins)
                       + "\nrows below the thick line (val100) are reference only — not in the analysis")

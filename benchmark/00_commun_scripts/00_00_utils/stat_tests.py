@@ -68,6 +68,40 @@ def fmt_p(p: float) -> str:
     return f"{p:.4f}"
 
 
+# ── Cross-TASK test: the unit is the SETTING (2026-10-20) ─────────────────
+#
+# A setting = one training contrast of one task (the model a practitioner would
+# train for a new task and then apply to unseen contrasts). Any comparison that
+# spans several tasks uses ONE score per setting and this exact sign test over
+# settings. Patients are the unit only WITHIN one task (macro_perm_design with a
+# single task's design, see meta_task_heatmap.task_design_entries). Pooling
+# patients of several tasks into one sign-flip test answers a different question
+# (it weights tasks by how many patients they happen to have, and inflates power):
+# it gave p<=4e-12 for comparisons that are 13/19 settings (p=0.08) here, so it is
+# no longer offered anywhere in the shared layer.
+
+def binom_tail_ge(w: int, n: int) -> float:
+    """P(X >= w) for X ~ Binomial(n, 1/2), exact."""
+    from math import comb
+    return sum(comb(n, i) for i in range(w, n + 1)) / 2 ** n
+
+
+def sign_test(a, b, higher_better: bool, two_sided: bool = False) -> tuple:
+    """Exact sign test over SETTINGS: a[i], b[i] = two methods' scores on setting i.
+    Pairs with a non-finite value are skipped, zero differences dropped.
+    One-sided alternative: `a` is better. Returns (wins of a, n non-tied, ties, p)."""
+    d = [(x - y) * (1 if higher_better else -1) for x, y in zip(a, b)
+         if np.isfinite(x) and np.isfinite(y)]
+    nz = [x for x in d if x != 0]
+    w, n = sum(x > 0 for x in nz), len(nz)
+    if not n:
+        return w, n, len(d), float("nan")
+    p = binom_tail_ge(w, n)
+    if two_sided:
+        p = min(1.0, 2 * min(p, binom_tail_ge(n - w, n)))
+    return w, n, len(d) - n, p
+
+
 # ── macroΔ primitives (contrast-stratified paired sign-flip test) ──────────
 #
 # Shared by significance_from_config.py (per-modality significance blocks) and

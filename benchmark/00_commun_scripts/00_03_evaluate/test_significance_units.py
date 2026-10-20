@@ -234,9 +234,42 @@ def test_label_flat_pool_not_equal_weight():
     print(f"ok 6  label=None leaf flat-pools raw values ({flat:.4f}) not per-label-equal-weight ({equal_weight_wrong:.4f})")
 
 
+def test_cross_task_unit_is_setting():
+    """2026-10-20: across tasks the unit is the SETTING (one training modality of one task),
+    never patients pooled over tasks. (a) stat_tests.sign_test is the exact binomial sign
+    test; (b) meta_task_heatmap.cross_setting_test feeds it one score per setting, so 3 tasks
+    with 2+1+2 settings give n = 5 however many patients each task has; (c) the within-task
+    design helper has no task index any more, so per-task designs cannot be stacked into a
+    patient-pooled cross-task test."""
+    import inspect
+    from stat_tests import sign_test
+    w, n, t, p = sign_test([2, 2, 2, 2, 1], [1, 1, 1, 1, 1], True)
+    assert (w, n, t) == (4, 4, 1) and np.isclose(p, 1 / 16), (w, n, t, p)
+    w, n, t, p = sign_test([1, 1, 1], [2, 2, 2], False)              # lower is better (HD95)
+    assert (w, n) == (3, 3) and np.isclose(p, 1 / 8)
+    assert np.isclose(sign_test([2, 0], [1, 1], True, two_sided=True)[3], 1.0)
+    spec = importlib.util.spec_from_file_location("meta_task_heatmap", HERE / "meta_task_heatmap.py")
+    mt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mt)
+    assert "tidx" not in inspect.signature(mt.task_design_entries).parameters
+    assert not hasattr(mt, "task_pooled_diffs")
+    # fake scores: ref beats comp on every setting; patients per task are irrelevant
+    score = {("ref", "a1"): .8, ("ref", "a2"): .7, ("ref", "b1"): .6, ("ref", "c1"): .9, ("ref", "c2"): .5,
+             ("comp", "a1"): .7, ("comp", "a2"): .6, ("comp", "b1"): .5, ("comp", "c1"): .8, ("comp", "c2"): .4}
+    mt.task_method_value = lambda mods, key, metric, groups=None: score[(key, mods[0]["name"])]
+    tasks = [{"name": n, "contrast_groups": None,
+              "modalities": [{"name": m, "runs": {"ref": "r", "comp": "c"}} for m in ms]}
+             for n, ms in (("A", ("a1", "a2")), ("B", ("b1",)), ("C", ("c1", "c2")))]
+    w, n, t, p = mt.cross_setting_test(tasks, "ref", "comp", "dice")
+    assert (w, n, t) == (5, 5, 0) and np.isclose(p, 1 / 32), (w, n, t, p)
+    tasks[1]["modalities"][0]["runs"].pop("comp")                   # a missing run drops that setting only
+    assert mt.cross_setting_test(tasks, "ref", "comp", "dice")[:2] == (4, 4)
+    print("ok 7  cross-task test = exact sign test over settings (n = #settings, not #patients)")
+
+
 if __name__ == "__main__":
     for t in (test_flat_matches_legacy, test_variance_matches_monte_carlo, test_tail_exact_and_monte_carlo,
               test_more_cases_shrink_variance, test_patient_units_merge, test_point_estimate_untouched,
-              test_label_flat_pool_not_equal_weight):
+              test_label_flat_pool_not_equal_weight, test_cross_task_unit_is_setting):
         t()
     print("all significance-unit checks passed")
