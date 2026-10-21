@@ -115,7 +115,6 @@ This changelog summarises the code history of the repository by month, newest fi
 **docs**
 - `6259ba2` rewrite README with overview, video and results
 - `2526545` fix the README video link (edit made on GitHub)
-- `b121795` add CHANGELOG.md, the code history by month
 
 **auglab**
 - `ecbdfad` add texlite, keepres and edgeonly reduced-AugLab arms
@@ -127,17 +126,13 @@ This changelog summarises the code history of the repository by month, newest fi
 
 **git**
 - `42b4916` add commit/push checks and hooks; fix CI lint and LICENSE
-- `139f50f` hist.sh is plain one-line log after the history rebuild
-- `49f571d` track the executable bit of the commit hooks
+- `235b9ce` post-rewrite follow-ups: CHANGELOG, CI on main, hist.sh
 
 **atlas-liver-hcc**
 - `c8584ce` track the liver HCC pipeline and companion scripts
 
 **benchmark**
 - `aba4cbd` track the pancreas companion scripts
-
-**ci**
-- `a9669d9` run on main only (trunk-based since the 2026-10-16 rewrite)
 
 </details>
 
