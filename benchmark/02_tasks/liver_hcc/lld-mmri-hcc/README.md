@@ -6,8 +6,8 @@ LLD-MMRI-HCC is the **hepatocellular-carcinoma subset of LLD-MMRI** (Lou et al. 
 *Neural Networks*; MedSAM2-annotated release, Ma/Yang et al. 2025). Here it serves a
 single purpose: **atlas-liver-hcc trains on a single modality (CE-T1w), so it cannot
 answer the cross-contrast robustness question on its own** — this dataset supplies
-**T2WI and DWI** (both genuinely different contrast mechanisms from CE-T1w) with real
-HCC lesion masks, letting atlas-liver-hcc-trained models be tested out-of-modality on
+**T2WI, DWI and Dixon in-/out-phase** (genuinely different contrast mechanisms from
+CE-T1w) with real HCC lesion masks, letting atlas-liver-hcc-trained models be tested out-of-modality on
 the same disease (HCC).
 
 ## Why no training here
@@ -22,26 +22,48 @@ the same disease (HCC).
 ## Data
 
 - **157 HCC patients** (category `Hepatocellular_carcinoma` = class 6, filtered from
-  the full 498-patient / 7-lesion-type LLD-MMRI dataset — see
-  `0_raw_lld-mmri-hcc/hcc_patient_ids.txt` and `LLD_MMRI_Annotation_full.json`), each
-  with **T2WI + DWI** phases (of the original 8 phases per lesion — the other 6 are
-  non-contrast T1 in/out-phase and 4 CE-T1w timings, same sequence family as
-  atlas-liver-hcc, so not useful for a cross-contrast test and not downloaded).
-- Source: `wanglab/LLD-MMRI-MedSAM2` on HuggingFace (public, no gate,
-  `snapshot_download` with `allow_patterns` targeted to the 157 HCC ids' T2WI/DWI
-  files only — 652 MB, not the full ~6 GB/7-class repo).
+  the full 498-patient / 7-lesion-type LLD-MMRI dataset). Every patient is imaged in
+  **all eight phases** the source provides, giving **eight test items** (same 157
+  patients in each, so more items, not more patients). Items are built by
+  `5_scripts_lld-mmri-hcc/05_predict/05_00_build_test_inputs.py` into
+  `2_nnUNet_lld-mmri-hcc/raw/imagesTs_<item>/` + `labelsTs_<item>/`:
+
+  | Item | Contrast | Role for the ATLAS CE-T1w-trained models |
+  |---|---|---|
+  | `ce-pre` | T1 pre-contrast | in-domain |
+  | `ce-art`, `ce-pv`, `ce-del` | T1 contrast-enhanced (arterial, portal-venous, delayed) | in-domain |
+  | `t2wi` | T2-weighted | held-out (OOD) |
+  | `dwi` | diffusion-weighted | held-out (OOD) |
+  | `inphase` | Dixon in-phase T1 | held-out (OOD) |
+  | `outphase` | Dixon out-of-phase T1 | held-out (OOD) |
+
+- **In-domain vs OOD.** The training set of this task is `../atlas-liver-hcc`, whose
+  cohort mixes CE-T1w phases, so **every T1 phase (pre-contrast included) counts as
+  in-domain** and is pooled into one group (`CE_T1w_all`) in
+  `atlas-liver-hcc/5_scripts_atlas-liver-hcc/06_evaluate/configs/atlas-liver-hcc_combined_01_results.yaml`.
+  The four contrasts T2WI, DWI, in-phase and out-phase are the held-out contrasts.
+  The HCC causal-ablation ladder (`atlas-liver-hcc/.../06_evaluate/06_13_ladder_summary.py`)
+  uses the grouped engine with OOD = these four items of this dataset only (the CE
+  phases are excluded as same-contrast).
+- Source: `wanglab/LLD-MMRI-MedSAM2` on HuggingFace (public, no gate; HCC patients only,
+  not the full ~6 GB 7-class repo). Image and label files are hard-linked into
+  `1_BIDS_lld-mmri-hcc/` by `00_utils/00_01_bidsify.py`.
+- **No pre-processing before prediction**: no crop, no resampling, no reorientation
+  (orientation was verified consistent at onboarding), and no FOV restriction.
 - Segmentation is **lesion-only** (binary `{0,1}`) — annotated via MedSAM2 in a
   human-in-the-loop pipeline, **not fully expert-drawn from scratch** like
   atlas-liver-hcc's masks. Verified organic (non-box) shape on a sample case before
-  onboarding (smooth per-slice area progression, not a rasterized bounding box), but
-  this quality caveat should be kept in mind when interpreting results — a weaker
-  cross-contrast Dice here could partly reflect annotation noise, not just domain gap.
-- No liver-organ mask exists in this dataset — only the `tumour` label is ever scored,
+  onboarding, but this quality caveat should be kept in mind when interpreting results —
+  a weaker cross-contrast Dice here could partly reflect annotation noise, not just
+  domain gap.
+- No liver-organ mask exists in this dataset — **only the `tumour` label is scored**,
   never `liver`.
-- Subject ids: sequential `sub-lldhcc000`..`sub-lldhcc156` (source patient ids mix
-  hyphenated/non-hyphenated formats — `MR-NNNNNN` vs `MRNNNNNN` — not BIDS-legal as-is;
-  original id + lesion-instance-suffix preserved in `participants.tsv` and
-  `case_id_map.json` for traceability).
+- Subject ids are sequential and BIDS-legal; the mapping to the source ids is kept
+  locally (`participants.tsv`, `case_id_map.json`) and is not part of the public repo.
+- Metrics land in
+  `8_results_lld-mmri-hcc/02_metrics/atlas_liver_hcc_model/t1w/<category>_<RUN_ID>/fold{k}/`
+  (ladder rungs under `.../t1w/ablations/`). SRCSM rows use test-time source matching
+  (the `_srcmatch` run directory).
 
 ## Evaluation specifics
 
@@ -52,7 +74,7 @@ the same disease (HCC).
   mechanism `msd-spleen` uses for chaos's spleen id (4) vs its own GT id (1).
 - No FOV restriction (unlike the chaos-family cross-eval sets) — a lesion target has
   no organ-boundary anchor concept.
-- Single input channel per item (T2WI or DWI) matches atlas-liver-hcc's single-channel
+- Single input channel per item matches atlas-liver-hcc's single-channel
   T1w model. nnU-Net applies atlas's T1w normalization statistics to genuinely
   different-contrast input — intentional; this is exactly what the domain-randomization
   methods are built to absorb.
