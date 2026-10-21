@@ -92,3 +92,16 @@ docs/*.md
 dashboard/
 benchmark/03_archive/*_retired_*/README.md
 benchmark/03_archive/legacy_eval_configs_*/README.md
+
+# Raw-release metadata of the liver and pancreas sources: per-patient tables, case-ID lists,
+# id/name maps, license copies and third-party code shipped with the release. LLD-MMRI is under
+# a no-redistribution data use agreement. Stays with the raw data (same rule as amos above).
+benchmark/02_tasks/liver_hcc/atlas-liver-hcc/0_raw_atlas-liver-hcc/*
+!benchmark/02_tasks/liver_hcc/atlas-liver-hcc/0_raw_atlas-liver-hcc/README.md
+benchmark/02_tasks/liver_hcc/lld-mmri-hcc/0_raw_lld-mmri-hcc/*
+benchmark/02_tasks/liver_hcc/lld-mmri-malignant/0_raw_lld-mmri-malignant/*
+benchmark/02_tasks/pancreas_disease/pansegdata/0_raw_pansegdata/LICENSE.txt
+benchmark/02_tasks/pancreas_disease/pansegdata/0_raw_pansegdata/*name_mapping.json
+
+# AugLab is its own git repo (branch palette, own GitHub remote).
+sub-workspaces/auglab_workspace/
