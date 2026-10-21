@@ -17,7 +17,7 @@ case "${MODE}" in
              RUNG4=lblvor .venv/bin/python ${PY} score && RUNG4=flatfill .venv/bin/python ${PY} score && RUNG4=lblvor REAL_ARM=flatfill .venv/bin/python ${PY} score" ;;
   extract) run_job --name vis_rule_extract --gpus 0 --cpus 8 --mem 48G --time 02:00:00 --log "${LOGS}/extract_${TS}.log" -- bash -c "${ENVS}; .venv/bin/python ${PY} extract" ;;
   polarity) run_job --name tex_rule_pol --gpus 0 --cpus 16 --mem 64G --time 01:00:00 --log "${LOGS}/polarity_${TS}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/texture_rule_polarity.py extract --nproc 16" ;;
-  shared_extract) run_job --name tex_shared_ext --gpus 0 --cpus 16 --mem 96G --time 03:00:00 --log "${LOGS}/shared_extract_${TS}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/texture_rule_shared.py extract --nproc 16" ;;
+  shared_extract) run_job --name tex_shared_ext --gpus 0 --cpus 8 --mem 32G --time 04:00:00 --log "${LOGS}/shared_extract_${TS}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/texture_rule_shared.py extract --nproc 8" ;;
   shared_score) run_job --name tex_shared_score --gpus 0 --cpus 1 --mem 8G --time 01:00:00 --log "${LOGS}/shared_score_${TS}.log" -- bash -c "${ENVS}; .venv/bin/python ${A}/scripts/texture_rule_shared.py score" ;;
   *) echo "unknown mode ${MODE}" >&2; exit 1 ;;
 esac
