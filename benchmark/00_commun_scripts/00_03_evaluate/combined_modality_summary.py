@@ -190,7 +190,7 @@ def paired(ref_cases: dict, comp_cases: dict, col: str) -> tuple:
 def significance_column(runs_ordered: list, ref_key: str, all_contrasts: list, metric: str,
                         modalities: list, contrast_groups: dict = None,
                         unit_scope: str = _agg.DEFAULT_UNIT_SCOPE,
-                        reverse: bool = False) -> dict:
+                        reverse: bool = False, table_weighted: bool = None) -> dict:
     """method_key -> Holm-corrected one-sided ("ref better") macroΔ p-value vs ref.
 
     reverse=True tests the OTHER direction ("competitor better") on the identical
@@ -212,14 +212,25 @@ def significance_column(runs_ordered: list, ref_key: str, all_contrasts: list, m
     load_combined_cases_raw (case tags "<training_modality>::<dataset>|<case>"),
     and the test runs on patient-level sign-flip units: the same test patient scored by
     each training modality's model — and, at unit_scope="patient", appearing in several
-    test contrasts — flips as ONE unit (see aggregate_from_config.build_design)."""
+    test contrasts — flips as ONE unit (see aggregate_from_config.build_design).
+
+    table_weighted (opt-in; None -> env TABLE_WEIGHTED_TESTS=1, config key
+    `table_weighted_tests:`): each patient contributes its values with the table's own
+    weights (aggregate_from_config.build_design_table_weighted), so the test statistic is
+    exactly the printed `all` difference. Same units, tail rule and Holm. Patient scope only."""
     higher_better = metric == "dice"
+    weighted = _agg.table_weighted_tests(table_weighted)
+    if weighted and unit_scope != "patient":
+        raise ValueError(f"table-weighted tests use patient units only (unit_scope={unit_scope!r})")
     groups = contrast_groups if contrast_groups else {c: c for c in all_contrasts}
     raw_data = {k: load_combined_cases_raw(modalities, k, metric) for k in runs_ordered}
     competitors = [k for k in runs_ordered if k != ref_key]
     p1s = []
     for key in competitors:
-        entries, K = _agg.build_design(groups, raw_data[ref_key], raw_data[key], unit_scope)
+        if weighted:
+            entries, K = _agg.build_design_table_weighted(groups, raw_data[ref_key], raw_data[key], metric)
+        else:
+            entries, K = _agg.build_design(groups, raw_data[ref_key], raw_data[key], unit_scope)
         p1s.append(macro_perm_design(entries, K, higher_better != reverse)[2])
     hp = holm(p1s)
     out = {ref_key: float("nan")}
@@ -479,7 +490,8 @@ def main():
     sig_by_metric = {
         metric: significance_column(runs_ordered, ref_key, all_contrasts, metric, modalities,
                                     contrast_groups=contrast_groups,
-                                    unit_scope=cfg.get("unit_scope", _agg.DEFAULT_UNIT_SCOPE))
+                                    unit_scope=cfg.get("unit_scope", _agg.DEFAULT_UNIT_SCOPE),
+                                    table_weighted=cfg.get("table_weighted_tests"))
         for metric in ("dice", "hd95")
     }
 

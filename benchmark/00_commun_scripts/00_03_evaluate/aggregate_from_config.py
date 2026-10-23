@@ -564,6 +564,120 @@ def build_design(groups: dict, ref_raw: dict, comp_raw: dict,
     return entries, K
 
 
+# ── opt-in table-weighted design (TABLE_WEIGHTED_TESTS=1, 2026-10-23) ───────────────────
+#
+# build_design's units carry the CASE-FIRST paired difference (each case collapsed to one
+# value -- mean of its fold means, labels pooled per fold -- then weighted per pool), so its
+# statistic is close to, but not exactly, the printed table difference: the table cell is
+# ROW-POOLED (per fold: mean over every finite (case, label) value of the pool; then mean
+# over folds; dict children weighted equally). The weighted design below gives each patient
+# its values with the TABLE's own weights, so sum_u c_u == table(ref) - table(comp) exactly:
+#   c_u = sum_{r of u} w_r^ref (v_r^ref - mu) - sum_{r of u} w_r^comp (v_r^comp - mu),
+# mu = mu(pool, fold) = mean of the two sides' fold means, used only where both sides' weights
+# in that (pool, fold) sum to the same total (else mu = 0); either way the identity holds.
+# Same units (unit_of), one stratum (K = 1), consumed by the same macro_perm_design.
+# Combined-table callers only (case tags "<training_modality>::<dataset>|<case>"): the fold
+# key is "<training_modality>_<fold>", as in combined_modality_summary.load_combined_run.
+# Off by default; the existing build_design path is untouched.
+def table_weighted_tests(cfg_value=None) -> bool:
+    """Opt-in switch: an explicit config value wins; otherwise env TABLE_WEIGHTED_TESTS=1."""
+    if cfg_value is not None:
+        return bool(cfg_value)
+    return os.environ.get("TABLE_WEIGHTED_TESTS", "0") == "1"
+
+
+def _table_pool_values(node, raw: dict, path: tuple) -> dict:
+    """{(path, col, case_tag, label, foldtag): value} of one leaf/list pool."""
+    vals = {}
+    for col, label in _leaf_refs(node):
+        for tag, labs in raw.get(col, {}).items():
+            if "::" not in tag:
+                raise ValueError(f"table-weighted design needs combined-table case tags "
+                                 f"('<modality>::<case>'), got {tag!r}")
+            mod = tag.split("::", 1)[0]
+            for lab in ([label] if label is not None else list(labs)):
+                for fold, v in labs.get(lab, {}).items():
+                    vals[(path, col, tag, lab, f"{mod}_{fold}")] = v
+    return vals
+
+
+def table_weights(node, raw: dict, path: tuple = ()) -> tuple:
+    """({r: w}, {r: v}) with sum_r w_r v_r == the node's table value: a dict averages its
+    finite children equally; a leaf/list pool averages per fold over its finite values, then
+    over its folds (resolve_group_value / cross_fold_class_mean's arithmetic)."""
+    if isinstance(node, dict) and "column" not in node:
+        kids = [table_weights(ch, raw, path + (k,)) for k, ch in node.items()]
+        kids = [k for k in kids if k[0]]
+        w, v = {}, {}
+        for kw, kv in kids:
+            for r, x in kw.items():
+                w[r] = x / len(kids)
+            v.update(kv)
+        return w, v
+    vals = _table_pool_values(node, raw, path)
+    n_f = defaultdict(int)
+    for r in vals:
+        n_f[r[4]] += 1
+    F = len(n_f)
+    return {r: 1.0 / (F * n_f[r[4]]) for r in vals}, vals
+
+
+def table_weighted_contrib(groups: dict, ref_raw: dict, comp_raw: dict) -> tuple:
+    """({unit: c_u}, table(ref), table(comp)) -- see the block comment above."""
+    wa, va = table_weights(groups, ref_raw)
+    wb, vb = table_weights(groups, comp_raw)
+    tot = defaultdict(lambda: [0.0, 0.0])
+    msum = defaultdict(lambda: [[0.0, 0], [0.0, 0]])
+    for side, (w, v) in enumerate(((wa, va), (wb, vb))):
+        for r, x in w.items():
+            key = (r[0], r[4])
+            tot[key][side] += x
+            msum[key][side][0] += v[r]
+            msum[key][side][1] += 1
+    mu = {}
+    for key, (ta, tb) in tot.items():
+        (sa, na), (sb, nb) = msum[key]
+        mu[key] = (sa / na + sb / nb) / 2.0 if (na and nb and abs(ta - tb) <= 1e-12) else 0.0
+    ca, cb = defaultdict(float), defaultdict(float)   # per side, then subtract: identical runs give exact 0
+    for r, x in wa.items():
+        ca[unit_of(r[2], r[1])] += x * (va[r] - mu[(r[0], r[4])])
+    for r, x in wb.items():
+        cb[unit_of(r[2], r[1])] += x * (vb[r] - mu[(r[0], r[4])])
+    c = {u: ca.get(u, 0.0) - cb.get(u, 0.0) for u in set(ca) | set(cb)}
+    vala = sum(x * va[r] for r, x in wa.items()) if wa else float("nan")
+    valb = sum(x * vb[r] for r, x in wb.items()) if wb else float("nan")
+    return c, vala, valb
+
+
+def _raw_as_run_data(raw: dict, metric: str) -> dict:
+    """load_combined_cases_raw shape -> load_combined_run shape (fold key '<mod>_<fold>')."""
+    data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    for col, cases in raw.items():
+        for tag, labs in cases.items():
+            mod = tag.split("::", 1)[0]
+            for lab, folds in labs.items():
+                for fold, v in folds.items():
+                    data[col][lab][f"{mod}_{fold}"].append(v)
+    return {metric: data}
+
+
+def build_design_table_weighted(groups: dict, ref_raw: dict, comp_raw: dict,
+                                metric: str = "dice") -> tuple:
+    """(entries, K) in build_design's shape, ONE stratum, entries (0, None, unit, c_u) whose
+    sum is exactly the printed table difference ref - comp (asserted against
+    resolve_group_value). ([], 0) when either side has no table value."""
+    c, va, vb = table_weighted_contrib(groups, ref_raw, comp_raw)
+    if not c or not (np.isfinite(va) and np.isfinite(vb)):
+        return [], 0
+    ta = resolve_group_value(groups, _raw_as_run_data(ref_raw, metric), metric)
+    tb = resolve_group_value(groups, _raw_as_run_data(comp_raw, metric), metric)
+    s = sum(c.values())
+    if abs(va - ta) > 1e-9 or abs(vb - tb) > 1e-9 or abs(s - (ta - tb)) > 1e-9:
+        raise AssertionError(f"table-weighted design: sum c {s!r} != table diff {ta - tb!r} "
+                             f"(weights {va!r}/{vb!r} vs table {ta!r}/{tb!r})")
+    return [(0, None, u, x) for u, x in sorted(c.items())], 1
+
+
 def resolve_group(node, ref_raw: dict, comp_raw: dict) -> np.ndarray:
     """One stratum's paired diff array (ref − comp), ONE ELEMENT PER PATIENT, scaled so
     `arr.mean()` is the group's weighted mean diff and `(arr**2).sum()/arr.size**2` its

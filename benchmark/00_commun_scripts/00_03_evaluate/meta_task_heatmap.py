@@ -59,6 +59,12 @@ Opt-in OOD-only mode (default off; without it the output is unchanged):
   what remains (a group left empty drops out of the task's equal-weight mean and
   of its test design).
 
+Opt-in table-weighted within-task tests (default off; without it the output is unchanged):
+  table_weighted_tests: true   # top level, or env TABLE_WEIGHTED_TESTS=1
+  The ★/▼ tests then give each patient its values with the table's own weights
+  (aggregate_from_config.build_design_table_weighted), so the statistic equals the
+  printed task-cell difference exactly; same units, tail rule, Holm and one-sidedness.
+
 Usage:
   python meta_task_heatmap.py <meta_config.yaml>
 Writes: {output_dir}/{output_prefix}_summary.md, _heatmap_dice.png, _heatmap_hd95.png
@@ -203,7 +209,7 @@ def task_method_value(modalities: list, method_key: str, metric: str,
 
 
 def task_design_entries(modalities: list, ref_key: str, comp_key: str, metric: str,
-                        contrast_groups: dict) -> list:
+                        contrast_groups: dict, table_weighted: bool = None) -> list:
     """ONE task's design for its WITHIN-task patient-level sign-flip test
     (macro_perm_design(entries, 1, ...)); the ★/▼ marks.
 
@@ -212,10 +218,18 @@ def task_design_entries(modalities: list, ref_key: str, comp_key: str, metric: s
     it appears in), entries rescaled by 1/K so the statistic is the task's
     displayed `all` difference. Every entry is in stratum 0: since 2026-10-20 there
     is no task index, so designs of several tasks cannot be stacked into one
-    patient-pooled cross-task test. Across tasks, use cross_setting_test."""
+    patient-pooled cross-task test. Across tasks, use cross_setting_test.
+
+    table_weighted (opt-in; None -> env TABLE_WEIGHTED_TESTS=1, meta-config key
+    `table_weighted_tests:`): patient contributions carry the table's own weights
+    (aggregate_from_config.build_design_table_weighted), so the statistic equals the
+    printed task-cell difference exactly; same units, still one stratum."""
     ref_raw = _cms.load_combined_cases_raw(modalities, ref_key, metric)
     comp_raw = _cms.load_combined_cases_raw(modalities, comp_key, metric)
     groups = contrast_groups or {c: c for c in sorted(set(ref_raw) | set(comp_raw))}
+    if _agg.table_weighted_tests(table_weighted):
+        entries, _ = _agg.build_design_table_weighted(groups, ref_raw, comp_raw, metric)
+        return entries
     entries, K = _agg.build_design(groups, ref_raw, comp_raw, _agg.DEFAULT_UNIT_SCOPE)
     if not K:
         return []
@@ -248,16 +262,17 @@ def cross_setting_test(tasks: list, a_key: str, b_key: str, metric: str,
                      metric == "dice", two_sided)
 
 
-def _per_task_sig(tasks, ref_key, competitors, metric, higher_better):
+def _per_task_sig(tasks, ref_key, competitors, metric, higher_better, table_weighted=None):
     """{competitor: [(verdict, p_win, p_lose) per task]} -- each task is its own single
     stratum (patient-level units, within the task only), Holm across the
-    competitors within the task, separately per direction."""
+    competitors within the task, separately per direction. table_weighted: see
+    task_design_entries (opt-in)."""
     out = {c: [] for c in competitors}
     for i, t in enumerate(tasks):
         pw, pl = [], []
         for comp in competitors:
             ents = task_design_entries(t["modalities"], ref_key, comp, metric,
-                                       t["contrast_groups"])
+                                       t["contrast_groups"], table_weighted)
             if ents:
                 pw.append(macro_perm_design(ents, 1, higher_better)[2])
                 pl.append(macro_perm_design(ents, 1, not higher_better)[2])
@@ -333,6 +348,12 @@ def main():
         "last row counts the ★. The val100 mirror is listed last for reference only — "
         "excluded from bold, `overall` ranking, significance and counts.", "",
     ]
+    table_weighted = _agg.table_weighted_tests(cfg.get("table_weighted_tests"))
+    if table_weighted:
+        lines += ["**Table-weighted within-task tests (TABLE_WEIGHTED_TESTS):** in the ★/▼ tests each "
+                  "patient contributes its values with the table's own weights, so the test statistic "
+                  "equals the printed task-cell difference exactly (same patient units, tail rule and Holm).",
+                  ""]
     if ood_only:
         lines += ["**OOD-only mode:** each training modality's models are scored on the "
                   "contrast groups that are out-of-domain for it only; the other "
@@ -356,7 +377,8 @@ def main():
 
         higher_better = metric == "dice"
         competitors = [k for k in method_order[:n_analysis] if k != ref_key]
-        task_sig[metric] = _per_task_sig(tasks, ref_key, competitors, metric, higher_better)
+        task_sig[metric] = _per_task_sig(tasks, ref_key, competitors, metric, higher_better,
+                                         table_weighted)
         # cross-task: settings are the unit (sign test over settings, Holm across competitors)
         st = {comp: cross_setting_test(tasks, ref_key, comp, metric) for comp in competitors}
         hp = holm([st[c][3] for c in competitors])
