@@ -105,6 +105,158 @@ def resolve_run_dir(metrics_root: Path, run_key: str) -> Path:
     return p
 
 
+# ── Table aggregation (OPT-IN, 2026-10-23) ─────────────────────────────────────────────────────────────────────────
+# Default (unchanged): a rung's value on one held-out contrast is CASE-FIRST -- each case's Dice/HD95 is averaged over
+# its labels and folds (load_case_means), then the cases are averaged. The main benchmark tables (tab:meta,
+# tab:suppl-dice, tab:suppl-ind-ood-*) aggregate differently (aggregate_from_config.resolve_group_value /
+# cross_fold_class_mean): per FOLD, the mean over every finite (case, label) value of the column -- cases and labels
+# pooled, a NaN value (Dice with both masks empty, HD95 with either mask empty) dropped -- then the mean over folds; a
+# contrast_groups list pools its leaves' values the same way, a dict averages its children with equal weight. NOTE this
+# is not "label-first" (each label averaged over cases, then labels averaged): the two differ whenever labels have
+# different numbers of finite values (Pelvis MRI-trained PA on CT, fold 0: 70.16 pooled vs 69.96 label-first; the
+# table prints 70.2).
+# table_agg=True (or LADDER_TABLE_AGG=1) computes every rung value with the main tables' rule ("table aggregation"),
+# so the rungs reproduce the main tables' cells. The ladder's own pooling is kept above that level (OOD = equal weight
+# per held-out contrast / contrast group; a group's member list pools its items), except for groups whose main-table
+# tree is registered in ladder_table_groups.yaml (Abdomen CT: equal weight per organ, as chaos_combined_01_results.yaml).
+# The significance fields the engine writes (fill_swap_significance, rung_step_significance) stay the legacy
+# case-level Wilcoxon in both modes; the paper's tests of the table estimand are compute_flatfill_decomposition.py's.
+# LADDER_OUT_ROOT=<dir> (opt-in, independent): write the outputs under <dir>/<repo-relative ablations path> instead of
+# the repo tree (inputs are still read from the repo), so a ladder can be regenerated without touching tracked files.
+TABLE_GROUPS_REGISTRY = Path(__file__).with_name("ladder_table_groups.yaml")
+_REPO = Path(__file__).resolve().parents[3]
+TABLE_AGG_NOTE = ("_Aggregation: TABLE (LADDER_TABLE_AGG=1) -- every value follows the main tables' rule (per fold, mean "
+                  "over every finite (case, label) value, then mean over folds; aggregate_from_config.resolve_group_value), "
+                  "not the default case-first mean. Significance columns/annotations are the engine's legacy case-level "
+                  "Wilcoxon, not a test of this estimand._")
+
+
+def _table_agg_on(table_agg=None) -> bool:
+    """Explicit keyword wins; None -> LADDER_TABLE_AGG=1 (default off)."""
+    import os
+    if table_agg is not None:
+        return bool(table_agg)
+    return os.environ.get("LADDER_TABLE_AGG", "0") == "1"
+
+
+def _out_root(ablations_root):
+    """LADDER_OUT_ROOT unset -> ablations_root unchanged. Set -> <LADDER_OUT_ROOT>/<ablations_root relative to the repo>
+    (idempotent: a path already under LADDER_OUT_ROOT is returned as is)."""
+    import os
+    out = os.environ.get("LADDER_OUT_ROOT")
+    if not out or ablations_root is None:
+        return ablations_root
+    out, p = Path(out).resolve(), Path(ablations_root).resolve()
+    if p == out or out in p.parents:
+        return Path(ablations_root)
+    return out / p.relative_to(_REPO)
+
+
+def load_case_rows(run_dir: Path, metric: str) -> dict:
+    """{contrast: {case: {(label, fold): value}}}: every FINITE per-(case, label, fold) value of a run, EVAL folds only
+    (filter_fold_dirs, as load_case_means) -- the raw material of table aggregation. A value the CSV holds twice raises
+    (the main tables would count it twice; nothing should hold one)."""
+    per: dict = {}
+    for fold_dir in filter_fold_dirs(sorted(run_dir.glob("fold*"))):
+        csv_path = fold_dir / "eval_all.csv"
+        if not csv_path.exists():
+            continue
+        with csv_path.open() as f:
+            for row in csv.DictReader(f):
+                c = row["contrast"] if "contrast" in row else row.get("group")
+                try:
+                    v = float(row[metric])
+                except (KeyError, ValueError):
+                    continue
+                if not np.isfinite(v):
+                    continue
+                cell = per.setdefault(c, {}).setdefault(row["case"], {})
+                key = (row.get("label", ""), fold_dir.name)
+                if key in cell:
+                    raise ValueError(f"{csv_path}: duplicate value {c}/{row['case']}/{key[0]}")
+                cell[key] = v
+    return per
+
+
+def _is_table_leaf(node) -> bool:
+    return isinstance(node, str) or (isinstance(node, dict) and ("item" in node or "column" in node))
+
+
+def _table_leaves(node) -> list:
+    """A leaf or (nested) list of leaves -> [(item, label or None)]. Leaf = an item name (str: all its labels) or
+    {"item"|"column": name, "label": one label}. A dict nested inside a list raises, as in aggregate_from_config._leaf_refs."""
+    if isinstance(node, str):
+        return [(node, None)]
+    if _is_table_leaf(node):
+        return [(node.get("item", node.get("column")), node.get("label"))]
+    if isinstance(node, list):
+        return [lf for n in node for lf in _table_leaves(n)]
+    raise ValueError(f"table aggregation: dict not supported nested inside a list: {node!r}")
+
+
+def _tree_items(node) -> set:
+    """Every item a tree references (dicts recursed)."""
+    if isinstance(node, dict) and not _is_table_leaf(node):
+        return set().union(*[_tree_items(ch) for ch in node.values()]) if node else set()
+    return {i for i, _ in _table_leaves(node)}
+
+
+def table_weights(node, rows_by_item: dict) -> dict:
+    """{(item, case, label, fold): weight}, sum(weight * value) = the MAIN-TABLE value of `node` (aggregate_from_config.
+    resolve_group_value): a leaf / list pools every finite value of its leaves fold by fold, weight 1 / (n_folds *
+    n_values_in_that_fold) (n_folds = folds holding at least one value); a dict averages its non-empty children with
+    equal weight. rows_by_item: {item: {case: {(label, fold): value}}}, finite values only. {} = no value."""
+    if isinstance(node, dict) and not _is_table_leaf(node):
+        kids = [table_weights(ch, rows_by_item) for ch in node.values()]
+        kids = [k for k in kids if k]
+        return {rid: w / len(kids) for k in kids for rid, w in k.items()}
+    rids = []
+    for item, lab in _table_leaves(node):
+        for case, cell in rows_by_item.get(item, {}).items():
+            for (lb, fold) in cell:
+                if lab is None or lb == lab:
+                    rids.append((item, case, lb, fold))
+    per_fold: dict = {}
+    for rid in rids:
+        per_fold[rid[3]] = per_fold.get(rid[3], 0) + 1
+    return {rid: 1.0 / (len(per_fold) * per_fold[rid[3]]) for rid in rids}
+
+
+def table_value(node, rows_by_item: dict) -> float:
+    """Main-table value of `node` (unscaled), NaN if it has no finite value."""
+    w = table_weights(node, rows_by_item)
+    if not w:
+        return float("nan")
+    return float(sum(wt * rows_by_item[i][c][(lb, f)] for (i, c, lb, f), wt in w.items()))
+
+
+def _table_trees(ablations_root, groups: dict) -> dict:
+    """{group: tree} for table aggregation of a grouped ladder: the group's member list (its items pooled), unless
+    ladder_table_groups.yaml registers the main table's tree for that group (matched on the END of ablations_root, like
+    ladder_pv_branch.yaml). A registered tree must reference exactly the group's members. LADDER_TABLE_GROUPS=0 ignores
+    the registry (every group = its pooled member list), to show what the registered trees change."""
+    import os
+    trees = {g: list(m) for g, m in groups.items()}
+    if (ablations_root is None or not TABLE_GROUPS_REGISTRY.exists()
+            or os.environ.get("LADDER_TABLE_GROUPS", "1") == "0"):
+        return trees
+    import yaml
+    reg = (yaml.safe_load(TABLE_GROUPS_REGISTRY.read_text()) or {}).get("ladders") or {}
+    s = str(Path(ablations_root)).rstrip("/")
+    hits = [v for k, v in reg.items() if s.endswith(str(k).rstrip("/"))]
+    if len(hits) > 1:
+        raise ValueError(f"{TABLE_GROUPS_REGISTRY.name}: {len(hits)} entries match {s}")
+    for g, tree in (hits[0] if hits else {}).items():
+        if g not in groups:
+            raise ValueError(f"{TABLE_GROUPS_REGISTRY.name}: group {g!r} is not an OOD group of {s} ({list(groups)})")
+        if _tree_items(tree) != set(groups[g]):
+            raise ValueError(f"{TABLE_GROUPS_REGISTRY.name}: tree of {g!r} references {sorted(_tree_items(tree))}, "
+                             f"the ladder group holds {sorted(groups[g])}")
+        trees[g] = tree
+        print(f"[table-agg] {s}: group {g!r} aggregated with the main table's tree {tree}")
+    return trees
+
+
 def rung_means(metrics_root: Path, run_key: str, metric: str,
                in_domain: str, ood_contrasts):
     run_dir = resolve_run_dir(metrics_root, run_key)
@@ -118,13 +270,20 @@ def rung_means(metrics_root: Path, run_key: str, metric: str,
     return ood, ind
 
 
-def _per_contrast_rung_means(metrics_root: Path, run_key: str, metric: str, ood_contrasts):
+def _per_contrast_rung_means(metrics_root: Path, run_key: str, metric: str, ood_contrasts, table_agg=False):
     """{contrast: mean} for ONE rung, each ood_contrast scored independently (not
-    pooled) -- the per-contrast counterpart to rung_means' pooled OOD figure."""
+    pooled) -- the per-contrast counterpart to rung_means' pooled OOD figure.
+    table_agg: the main-table value of each contrast column instead of the mean of case means."""
     run_dir = resolve_run_dir(metrics_root, run_key)
     scale = 100 if metric == "dice" else 1
     out = {}
     if not run_dir.is_dir():
+        return out
+    if table_agg:
+        rows = load_case_rows(run_dir, metric)
+        for c in ood_contrasts:
+            v = table_value(c, rows)
+            out[c] = v * scale if np.isfinite(v) else float("nan")
         return out
     data = load_case_means(run_dir, metric)
     for c in ood_contrasts:
@@ -199,6 +358,7 @@ def _with_pv_branch(fn):
                     rungs[fi] = (rungs[fi][0], rungs[fi][1], key["rung5"])
                 key = key["rung6"]
             out = Path(kw["ablations_root"]).with_name(Path(kw["ablations_root"]).name + "_pv")
+            out = _out_root(out)          # no-op unless LADDER_OUT_ROOT is set
             out.mkdir(parents=True, exist_ok=True)
             print(f"[pv-branch] {fn.__name__}: rungs 0..{fi} + rung 6 ({key}) -> {out}")
             _LADDER_DEPTH += 1
@@ -517,7 +677,7 @@ def _per_contrast_table_md(rungs, contrast_labels, per_contrast) -> list[str]:
 @_with_pv_branch
 def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
               in_domain, ood_contrasts, rungs, combined_png=True, extra_ood_sources=None,
-              ood_groups=None):
+              ood_groups=None, table_agg=None):
     """Compute the ladder, write ladder_summary.md + a JSON dump (for the shared
     multi-task plotting script) into ablations_root, plus the dataset-local pooled
     2-panel PNG and a per-eval-contrast "sub-ladder" 2-panel PNG. Returns the dump dict.
@@ -561,13 +721,19 @@ def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
     (run_ladder_grouped): each group POOLS ALL ITS CASES (e.g. every pre-contrast
     case from every cohort together), OOD = equal weight per group, significance is
     per group (pooled pairs, patient-merged, Holm across groups) plus one pooled OOD
-    test, and only OOD is reported. Every OOD label must belong to exactly one group."""
+    test, and only OOD is reported. Every OOD label must belong to exactly one group.
+
+    table_agg (optional, 2026-10-23; None -> LADDER_TABLE_AGG=1): every rung value uses the main tables' aggregation
+    (see the "Table aggregation" block above) instead of case-first means. Outputs go to LADDER_OUT_ROOT if set."""
     extra_ood_sources = extra_ood_sources or []
+    table_agg = _table_agg_on(table_agg)
     if ood_groups:
         return run_ladder_grouped(task_name=task_name, contrast_label=contrast_label,
                                   metrics_root=metrics_root, ablations_root=ablations_root,
                                   ood_contrasts=ood_contrasts, rungs=rungs,
-                                  extra_ood_sources=extra_ood_sources, ood_groups=ood_groups)
+                                  extra_ood_sources=extra_ood_sources, ood_groups=ood_groups,
+                                  table_agg=table_agg)
+    ablations_root = _out_root(ablations_root)
     extra_labels: list[str] = []
     for _, _, run_key in rungs:
         found = _cross_dataset_contrast_labels(extra_ood_sources, run_key, "dice")
@@ -604,9 +770,10 @@ def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
         vals = {}
         vals_all = {}
         for metric in ("dice", "hd95"):
-            own_pc = _per_contrast_rung_means(metrics_root, run_key, metric, ood_contrasts)
-            extra_pc = _per_contrast_rung_means_cross_dataset(extra_ood_sources, run_key, metric, extra_labels)
-            in_domain_pc = _per_contrast_rung_means(metrics_root, run_key, metric, [in_domain])
+            own_pc = _per_contrast_rung_means(metrics_root, run_key, metric, ood_contrasts, table_agg=table_agg)
+            extra_pc = _per_contrast_rung_means_cross_dataset(extra_ood_sources, run_key, metric, extra_labels,
+                                                              table_agg=table_agg)
+            in_domain_pc = _per_contrast_rung_means(metrics_root, run_key, metric, [in_domain], table_agg=table_agg)
             pooled = {**own_pc, **extra_pc, in_domain_label: in_domain_pc.get(in_domain, float("nan"))}
             for c in full_labels:
                 per_contrast[metric][c].append(pooled.get(c, float("nan")))
@@ -634,6 +801,8 @@ def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
 
     if missing:
         lines += ["", f"_Not yet available: {', '.join(missing)}_"]
+    if table_agg:
+        lines += ["", TABLE_AGG_NOTE]
     lines += [""] + _per_contrast_table_md(rungs, full_labels, per_contrast)
 
     ablations_root.mkdir(parents=True, exist_ok=True)
@@ -680,6 +849,8 @@ def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
         "fill_swap_significance": sig,
         "rung_step_significance": steps,
     }
+    if table_agg:
+        dump["aggregation"] = "table"
     (ablations_root / "ladder_series.json").write_text(json.dumps(dump, indent=2))
     print(f"→ {ablations_root / 'ladder_series.json'}")
 
@@ -690,7 +861,7 @@ def run_ladder(*, task_name, contrast_label, metrics_root, ablations_root,
     return dump
 
 
-def rung_means_cross_dataset(ood_sources, in_domain_source, run_key, metric):
+def rung_means_cross_dataset(ood_sources, in_domain_source, run_key, metric, table_agg=False):
     """Like rung_means, but for single-contrast datasets (e.g. atlas-liver-hcc) that
     have no second training modality to hold out -- OOD is pooled across MULTIPLE
     metrics roots (separate cross-dataset evaluators, e.g. lld-mmri-hcc + liverhccseg,
@@ -698,8 +869,20 @@ def rung_means_cross_dataset(ood_sources, in_domain_source, run_key, metric):
     columns within one dataset's own metrics tree. `run_key` is the SAME run id
     evaluated by every source (it's the same checkpoint, just scored by each
     cross-dataset's own eval script into that dataset's own metrics tree).
-    in_domain_source may be None (no in-domain figure available/needed)."""
+    in_domain_source may be None (no in-domain figure available/needed).
+    table_agg: every value of every item pooled with the main tables' rule (one list node) instead of case means."""
     scale = 100 if metric == "dice" else 1
+    if table_agg:
+        def pooled(roots):
+            rows = {}
+            for i, root in enumerate(roots):
+                rd = resolve_run_dir(root, run_key)
+                if rd.is_dir():
+                    for item, cases in load_case_rows(rd, metric).items():
+                        rows[f"{i}:{item}"] = cases
+            v = table_value(list(rows), rows) if rows else float("nan")
+            return v * scale if np.isfinite(v) else float("nan")
+        return pooled(ood_sources), (pooled([in_domain_source]) if in_domain_source is not None else float("nan"))
     all_vals = []
     for metrics_root in ood_sources:
         run_dir = resolve_run_dir(metrics_root, run_key)
@@ -751,15 +934,25 @@ def resolve_grouped_ood_value(node, item_to_cases: dict) -> float:
     return float(np.mean(vals)) if vals else float("nan")
 
 
-def rung_value_grouped(prefixed_sources, run_key, metric, contrast_groups):
+def rung_value_grouped(prefixed_sources, run_key, metric, contrast_groups, table_agg=False):
     """Grouped-pooling counterpart of rung_means_cross_dataset. prefixed_sources
     is a list of (metrics_root, column_prefix) pairs (mirrors aggregate_from_
     config.py's sources: schema) -- unlike rung_means_cross_dataset, this
     INCLUDES the in-domain source (e.g. atlas's own t1w) as just another
     prefixed source, since a contrast_groups leaf (e.g. "atlas_t1w") may need
     to reference it directly. Returns the scaled OOD-equivalent scalar (equal-
-    weight-per-group, per contrast_groups) for this one rung."""
+    weight-per-group, per contrast_groups) for this one rung.
+    table_agg: the contrast_groups tree resolved with the main tables' rule (table_value; {column, label} leaves too)."""
     scale = 100 if metric == "dice" else 1
+    if table_agg:
+        item_to_rows: dict = {}
+        for metrics_root, prefix in prefixed_sources:
+            run_dir = resolve_run_dir(metrics_root, run_key)
+            if run_dir.is_dir():
+                for item, cases in load_case_rows(run_dir, metric).items():
+                    item_to_rows[f"{prefix}{item}"] = cases
+        val = table_value(contrast_groups, item_to_rows)
+        return val * scale if np.isfinite(val) else val
     item_to_cases: dict = {}
     for metrics_root, prefix in prefixed_sources:
         run_dir = resolve_run_dir(metrics_root, run_key)
@@ -821,15 +1014,21 @@ def _cross_dataset_contrast_labels(ood_sources, run_key, metric):
     return labels
 
 
-def _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contrast_labels):
+def _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contrast_labels, table_agg=False):
     """{'<dataset>/<item>': mean} for ONE rung -- the per-source-item counterpart
-    of rung_means_cross_dataset's pooled figure."""
+    of rung_means_cross_dataset's pooled figure. table_agg: main-table value of each item."""
     scale = 100 if metric == "dice" else 1
     per_source = {}
     for src in ood_sources:
         metrics_root = _src_root(src)
         run_dir = resolve_run_dir(metrics_root, _src_key(src, run_key))
         ds = _dataset_name(metrics_root)
+        if table_agg:
+            rows = load_case_rows(run_dir, metric) if run_dir.is_dir() else {}
+            for item in rows:
+                v = table_value(item, rows)
+                per_source[f"{ds}/{item}"] = v * scale if np.isfinite(v) else float("nan")
+            continue
         data = load_case_means(run_dir, metric) if run_dir.is_dir() else {}
         for item, cases in data.items():
             per_source[f"{ds}/{item}"] = float(np.mean(list(cases.values()))) * scale if cases else float("nan")
@@ -841,7 +1040,7 @@ def _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contras
 def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablations_root,
                               rungs, in_domain_source=None, combined_png=True,
                               contrast_groups=None, prefixed_sources=None, in_domain_group=None,
-                              exclude_contrast_labels=None):
+                              exclude_contrast_labels=None, table_agg=None):
     """Cross-DATASET sibling of run_ladder(), for datasets with only one training
     modality (no cross-contrast OOD possible). `ood_sources` is a list of metrics-root
     Paths (one per cross-dataset evaluator); `rungs` entries are (label, ingredient,
@@ -881,6 +1080,8 @@ def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablation
     items plotted alongside a mean that no longer includes them is misleading,
     not merely incomplete. Pass the raw labels for whatever contrast_groups
     subtree in_domain_group points at."""
+    table_agg = _table_agg_on(table_agg)     # opt-in, see run_ladder's table_agg
+    ablations_root = _out_root(ablations_root)
     series = {"dice": [], "hd95": []}
     if contrast_groups and in_domain_group:
         contrast_groups = {k: v for k, v in contrast_groups.items() if k != in_domain_group}
@@ -920,17 +1121,18 @@ def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablation
     missing = []
     for label, ingredient, run_key in rungs:
         if contrast_groups:
-            ood_dice = rung_value_grouped(prefixed_sources, run_key, "dice", contrast_groups)
-            ood_hd95 = rung_value_grouped(prefixed_sources, run_key, "hd95", contrast_groups)
+            ood_dice = rung_value_grouped(prefixed_sources, run_key, "dice", contrast_groups, table_agg=table_agg)
+            ood_hd95 = rung_value_grouped(prefixed_sources, run_key, "hd95", contrast_groups, table_agg=table_agg)
         else:
-            ood_dice, _ = rung_means_cross_dataset(ood_sources, in_domain_source, run_key, "dice")
-            ood_hd95, _ = rung_means_cross_dataset(ood_sources, in_domain_source, run_key, "hd95")
+            ood_dice, _ = rung_means_cross_dataset(ood_sources, in_domain_source, run_key, "dice", table_agg=table_agg)
+            ood_hd95, _ = rung_means_cross_dataset(ood_sources, in_domain_source, run_key, "hd95", table_agg=table_agg)
         if not np.isfinite(ood_dice):
             missing.append(run_key)
         series["dice"].append(ood_dice)
         series["hd95"].append(ood_hd95)
         for metric in ("dice", "hd95"):
-            pc = _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contrast_labels)
+            pc = _per_contrast_rung_means_cross_dataset(ood_sources, run_key, metric, contrast_labels,
+                                                        table_agg=table_agg)
             for c in contrast_labels:
                 per_contrast[metric][c].append(pc[c])
         d_dice = f"{ood_dice - prev_dice:+.2f}" if prev_dice is not None and np.isfinite(ood_dice) else ""
@@ -940,6 +1142,8 @@ def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablation
 
     if missing:
         lines += ["", f"_Not yet available: {', '.join(missing)}_"]
+    if table_agg:
+        lines += ["", TABLE_AGG_NOTE]
     if contrast_labels:
         lines += [""] + _per_contrast_table_md(rungs, contrast_labels, per_contrast)
 
@@ -974,6 +1178,11 @@ def run_ladder_cross_dataset(*, task_name, contrast_label, ood_sources, ablation
         "fill_swap_significance": sig,
         "rung_step_significance": steps,
     }
+    if table_agg:
+        dump["aggregation"] = "table"
+        if contrast_groups:   # the OOD tree and its sources, so a consumer can rebuild the table estimand exactly
+            dump["table_groups"] = contrast_groups
+            dump["prefixed_sources"] = [[str(p), pre] for p, pre in prefixed_sources]
     (ablations_root / "ladder_series.json").write_text(json.dumps(dump, indent=2))
     print(f"→ {ablations_root / 'ladder_series.json'}")
 
@@ -1132,10 +1341,36 @@ def _labelled_case_values(metrics_root, ood_contrasts, extra_ood_sources, run_ke
     return out
 
 
+def _labelled_case_rows(metrics_root, ood_contrasts, extra_ood_sources, run_key, metric):
+    """Table-aggregation counterpart of _labelled_case_values (same labels, same "<ns>|<case>" keys, same opt-in
+    "items" filter): {OOD label: {"<ns>|<case>": {(label, fold): value}}}, finite values only."""
+    out = {}
+    own_ns = _dataset_name(metrics_root)
+    rd = resolve_run_dir(metrics_root, run_key)
+    if rd.is_dir():
+        data = load_case_rows(rd, metric)
+        for c in ood_contrasts:
+            if data.get(c):
+                out[c] = {f"{own_ns}|{k}": v for k, v in data[c].items()}
+    for src in extra_ood_sources:
+        root = _src_root(src)
+        ds = _dataset_name(root)
+        rd = resolve_run_dir(root, _src_key(src, run_key))
+        if not rd.is_dir():
+            continue
+        keep = src.get("items") if isinstance(src, dict) else None
+        for item, cases in load_case_rows(rd, metric).items():
+            if keep and item not in keep:
+                continue
+            if cases:
+                out[f"{ds}/{item}"] = {f"{ds}|{k}": v for k, v in cases.items()}
+    return out
+
+
 @_with_flat_rung
 @_with_pv_branch
 def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_root,
-                       ood_contrasts, rungs, extra_ood_sources, ood_groups):
+                       ood_contrasts, rungs, extra_ood_sources, ood_groups, table_agg=None):
     """GROUPED-mode ladder (see run_ladder's ood_groups). Per rung and metric:
       group value = mean over ALL cases pooled from the group's member labels
                     (case-level pooling: "all pre-contrast together");
@@ -1145,7 +1380,11 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
     test over every group's pairs; every rung-to-rung step tested the same way.
     Reports OOD only. Writes ladder_summary.md, ladder_series.json,
     ladder_<label>.png (pooled OOD curve) and ladder_<label>_cross_dataset_per_contrast.png
-    (one curve per contrast group); no per-item _per_contrast.png."""
+    (one curve per contrast group); no per-item _per_contrast.png.
+    table_agg (opt-in, see run_ladder): group value = main-table value of the group's tree (_table_trees)."""
+    table_agg = _table_agg_on(table_agg)
+    trees = _table_trees(ablations_root, ood_groups) if table_agg else None
+    ablations_root = _out_root(ablations_root)
     groups = {g: list(m) for g, m in ood_groups.items()}
     scale = {"dice": 100.0, "hd95": 1.0}
     vals = {r[2]: {m: _labelled_case_values(metrics_root, ood_contrasts, extra_ood_sources, r[2], m)
@@ -1172,9 +1411,15 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
     for _, _, rk in rungs:
         for m in ("dice", "hd95"):
             gv = []
+            rows = (_labelled_case_rows(metrics_root, ood_contrasts, extra_ood_sources, rk, m)
+                    if table_agg else None)
             for g in groups:
-                cs = [v for v in group_cases(rk, m, g).values() if np.isfinite(v)]
-                val = float(np.mean(cs)) * scale[m] if cs else float("nan")
+                if table_agg:
+                    tv = table_value(trees[g], rows)
+                    val = tv * scale[m] if np.isfinite(tv) else float("nan")
+                else:
+                    cs = [v for v in group_cases(rk, m, g).values() if np.isfinite(v)]
+                    val = float(np.mean(cs)) * scale[m] if cs else float("nan")
                 per_group[m][g].append(val)
                 if np.isfinite(val):
                     gv.append(val)
@@ -1253,6 +1498,8 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
     if fill_idx is not None:
         lines += ["", f"Fill-swap ({rungs[fill_idx - 1][0]} → {rungs[fill_idx][0]}) pooled OOD: Dice p={sig['dice']['pooled_p']:.2g}, "
                       f"HD95 p={sig['hd95']['pooled_p']:.2g} (n={sig['dice']['n_cases']} patients)."]
+    if table_agg:
+        lines += ["", TABLE_AGG_NOTE + " Group trees: " + json.dumps(trees)]
 
     ablations_root.mkdir(parents=True, exist_ok=True)
     (ablations_root / "ladder_summary.md").write_text("\n".join(lines) + "\n")
@@ -1267,6 +1514,9 @@ def run_ladder_grouped(*, task_name, contrast_label, metrics_root, ablations_roo
                                   for src in extra_ood_sources],
             "ood_groups": groups, "group_sizes": n_info,
             "per_contrast": per_group, "fill_swap_significance": sig, "rung_step_significance": steps}
+    if table_agg:
+        dump["aggregation"] = "table"
+        dump["table_groups"] = trees
     (ablations_root / "ladder_series.json").write_text(json.dumps(dump, indent=2))
     _write_combined_png(ablations_root, contrast_label, task_name, rungs, series, sig=sig)
     _write_per_contrast_png(ablations_root, contrast_label, task_name, rungs, series, per_group,

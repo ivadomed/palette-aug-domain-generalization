@@ -1,0 +1,39 @@
+# Table-aggregation group trees for ladder_ood_common.py (added 2026-10-23). Read ONLY in table-aggregation mode
+# (LADDER_TABLE_AGG=1 / table_agg=True); the default case-first ladders ignore this file.
+#
+# In table mode a grouped ladder's OOD group is, by default, its member list (every item pooled, value by value, fold by
+# fold, as aggregate_from_config.resolve_group_value pools a contrast_groups list). Where the MAIN TABLE pools a group
+# differently, its tree is restated here with the ladder's own item labels ("<item>" for the ladder's own dataset,
+# "<dataset>/<item>" for an extra source), so the ladder's rung values reproduce the main table's cells:
+#   - a str leaf = every label of that item; {item: <label>, label: <one label>} = that label only;
+#   - a list POOLS its leaves; a dict AVERAGES its children with equal weight (same grammar as contrast_groups).
+# Keyed by the END of the ladder's ablations_root (as ladder_pv_branch.yaml). The engine refuses a tree that does not
+# reference exactly the group's member items.
+#
+# Abdomen (CHAOS) CT: chaos_combined_01_results.yaml pools CT per ORGAN, then averages liver / spleen / kidney with equal
+# weight (liver = CHAOS CT + AMOS CT liver + SLIVER07; spleen and both kidneys from AMOS CT). The ladders' own ct group
+# (ct + amos/ct + sliver07/ct) would instead pool every organ's values together (liver 140, spleen 100, kidneys 200 values
+# per fold), which is not what the table prints.
+ladders:
+  abdomen_healthy/chaos/8_results_chaos/02_metrics/chaos_model/t1in/ablations:
+    ct:
+      liver:
+        - ct
+        - {item: amos/ct, label: liver}
+        - sliver07/ct
+      spleen:
+        - {item: amos/ct, label: spleen}
+      kidney:
+        - {item: amos/ct, label: left_kidney}
+        - {item: amos/ct, label: right_kidney}
+  abdomen_healthy/chaos/8_results_chaos/02_metrics/chaos_model/t2spir/ablations:
+    ct:
+      liver:
+        - ct
+        - {item: amos/ct, label: liver}
+        - sliver07/ct
+      spleen:
+        - {item: amos/ct, label: spleen}
+      kidney:
+        - {item: amos/ct, label: left_kidney}
+        - {item: amos/ct, label: right_kidney}
