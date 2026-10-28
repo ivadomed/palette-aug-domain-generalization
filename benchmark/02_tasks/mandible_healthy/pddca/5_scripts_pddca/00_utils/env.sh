@@ -15,16 +15,19 @@
 # CT-specific −7 Dice cost.
 #
 # LICENCE (verified 2026-09-17, 2 of the 3 pre-flight checks positive):
-#   * Underlying CT = TCIA collection "Head-Neck-Cetuximab" (RTOG 0522, 111 subjects)
-#     = **CC BY 3.0**, stated on TCIA's own collection page. This is authoritative.
+#   * Underlying CT = TCIA collection "Head-Neck-Cetuximab" (RTOG 0522, 111 subjects).
+#     CORRECTION 2026-10-26 (re-read the page HTML): the "Images and Radiation Therapy
+#     Structures" row is licensed "NIH Controlled Data Access Policy" (images could
+#     reconstruct a face); CC BY 3.0 is only the Trial Protocol PDF row. The earlier
+#     "CC BY 3.0" reading below is wrong. No open licence: the BIDS copy is kept on the
+#     lab-internal git-annex server only, not for redistribution (see the BIDS leaf's LICENSE).
 #   * PDDCA's re-contours: its protocol doc is titled "A Public Domain Database",
 #     states the data are "made available to the public domain via TCIA", and contains
 #     NO restriction language anywhere (grepped for licence/copyright/redistribute).
 #   * ⚠️ There is NO bundled LICENSE file in any of the three archives, so the third
 #     check is INCONCLUSIVE, not negative. Do NOT claim "CC BY 4.0" — a web search
 #     asserts it and no primary source confirms it.
-#   Far more permissive than hanseg's CC BY-NC-ND. CC BY 3.0 attribution applies to
-#   the images for any redistribution.
+#   (Superseded 2026-10-26: not "far more permissive than hanseg"; see correction above.)
 #
 # USABLE N: **40 of 48**. All 48 case dirs carry img.nrrd; 8 have no Mandible.nrrd
 # (0522c0329, 0330, 0427, 0433, 0441, 0455, 0457, 0479) and are skipped. The

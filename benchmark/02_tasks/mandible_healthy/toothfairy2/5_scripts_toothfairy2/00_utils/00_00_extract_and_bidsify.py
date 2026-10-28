@@ -10,10 +10,10 @@ WHAT THIS DOES, PER CASE
      into $SLURM_TMPDIR, read with SimpleITK, delete immediately
   2. REORIENT both to RAS
   3. RESAMPLE both to TARGET_SPACING mm isotropic (image: B-spline; label: nearest)
-  4. REMAP the 42-class label volume to this project's 5 classes
+  4. REMAP the 42-class label volume to this project's 3 classes
      (00_utils/toothfairy2_labels.py is the single source of truth)
-  5. write BIDS: sub-<id>/anat/sub-<id>_acq-cbct_ct.nii.gz
-     + derivatives/labels/sub-<id>/anat/sub-<id>_acq-cbct_ct_label-maxillofacial_seg.nii.gz
+  5. write BIDS: sub-<id>/ct/sub-<id>_acq-cbct_ct.nii.gz   (draft BIDS CT layout, BEP024)
+     + derivatives/labels/sub-<id>/ct/sub-<id>_acq-cbct_ct_label-maxillofacial_dseg.nii.gz
   6. append a per-case audit row (orientation BEFORE and AFTER, shape, spacing,
      per-class voxel counts) to conversion_audit.json
 
@@ -187,16 +187,16 @@ def convert_one(case: str) -> dict:
     lab_out = sitk.GetImageFromArray(out)
     lab_out.CopyInformation(lab_r)
 
-    a_dir = BIDS_ROOT / sub / "anat"; a_dir.mkdir(parents=True, exist_ok=True)
-    d_dir = DERIV_ROOT / sub / "anat"; d_dir.mkdir(parents=True, exist_ok=True)
+    a_dir = BIDS_ROOT / sub / "ct"; a_dir.mkdir(parents=True, exist_ok=True)
+    d_dir = DERIV_ROOT / sub / "ct"; d_dir.mkdir(parents=True, exist_ok=True)
     sitk.WriteImage(sitk.Cast(img_r, sitk.sitkFloat32),
                     str(a_dir / f"{sub}_acq-cbct_ct.nii.gz"), useCompression=True)
     sitk.WriteImage(lab_out,
-                    str(d_dir / f"{sub}_acq-cbct_ct_label-maxillofacial_seg.nii.gz"),
+                    str(d_dir / f"{sub}_acq-cbct_ct_label-maxillofacial_dseg.nii.gz"),
                     useCompression=True)
 
     img_out_p = a_dir / f"{sub}_acq-cbct_ct.nii.gz"
-    lab_out_p = d_dir / f"{sub}_acq-cbct_ct_label-maxillofacial_seg.nii.gz"
+    lab_out_p = d_dir / f"{sub}_acq-cbct_ct_label-maxillofacial_dseg.nii.gz"
     return {"case": case, "sub": sub, "before": before,
             "after": {"image": _axcodes(img_r), "label": _axcodes(lab_r),
                       "image_nib": _nib_axcodes(img_out_p),

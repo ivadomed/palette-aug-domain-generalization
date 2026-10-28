@@ -53,8 +53,8 @@ def main() -> None:
     n_ok, missing = 0, []
     for sub in subs:
         case = sub[len("sub-"):]                       # LV01
-        img = BIDS_ROOT / sub / "anat" / f"{sub}_CT.nii.gz"
-        seg = DERIV_DIR / sub / "anat" / f"{sub}_CT_label-liver_seg.nii.gz"
+        img = BIDS_ROOT / sub / "ct" / f"{sub}_ct.nii.gz"
+        seg = DERIV_DIR / sub / "ct" / f"{sub}_ct_label-liver_seg.nii.gz"
         if not img.exists() or not seg.exists():
             missing.append(case)
             continue

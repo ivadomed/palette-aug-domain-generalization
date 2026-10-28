@@ -122,8 +122,8 @@ def _toothfairy2_cases():
     pairs = []
     for cid in ids:
         sub = "sub-" + cid.split("_", 1)[1]
-        img = bids / sub / "anat" / f"{sub}_acq-cbct_ct.nii.gz"
-        lbl = bids / "derivatives" / "labels" / sub / "anat" / f"{sub}_acq-cbct_ct_label-maxillofacial_seg.nii.gz"
+        img = bids / sub / "ct" / f"{sub}_acq-cbct_ct.nii.gz"
+        lbl = bids / "derivatives" / "labels" / sub / "ct" / f"{sub}_acq-cbct_ct_label-maxillofacial_dseg.nii.gz"
         if img.exists() and lbl.exists():
             pairs.append((cid, img, lbl))
     return pairs

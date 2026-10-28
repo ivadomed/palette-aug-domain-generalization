@@ -3,7 +3,7 @@
 HaN-Seg -> FOV-matched, CBCT-comparable CT test set for toothfairy2 models.
 
 Produces, per case:
-  BIDS  sub-<id>/anat/sub-<id>_ct.nii.gz  + derivatives .../_label-mandible_seg.nii.gz
+  BIDS  sub-<id>/ct/sub-<id>_ct.nii.gz  + derivatives .../_label-mandible_seg.nii.gz
   nnUNet <nnUNet_raw>/imagesTs_ct/hanseg_<id>_0000.nii.gz  (+ labelsTs_ct/)
 
      ⚠️ FLAT layout, deliberately — no Dataset<id>/ subdir. The shared cross-dataset
@@ -212,8 +212,8 @@ def prepare_one(case: str) -> dict:
     seg_r = _resample(seg_i, is_label=True)
 
     sub = f"sub-{case.replace('_', '')}"
-    a_dir = BIDS_ROOT / sub / "anat"; a_dir.mkdir(parents=True, exist_ok=True)
-    d_dir = DERIV_ROOT / sub / "anat"; d_dir.mkdir(parents=True, exist_ok=True)
+    a_dir = BIDS_ROOT / sub / "ct"; a_dir.mkdir(parents=True, exist_ok=True)     # draft BIDS CT layout (BEP024)
+    d_dir = DERIV_ROOT / sub / "ct"; d_dir.mkdir(parents=True, exist_ok=True)
     img_p = a_dir / f"{sub}_ct.nii.gz"
     seg_p = d_dir / f"{sub}_ct_label-mandible_seg.nii.gz"
     sitk.WriteImage(img_r, str(img_p), useCompression=True)
@@ -253,8 +253,8 @@ def main() -> None:
     img_ts.mkdir(parents=True, exist_ok=True); lab_ts.mkdir(parents=True, exist_ok=True)
     for r in rows:
         sub = r["sub"]; cid = f"hanseg_{sub.removeprefix('sub-')}"
-        for src, dst in ((BIDS_ROOT / sub / "anat" / f"{sub}_ct.nii.gz", img_ts / f"{cid}_0000.nii.gz"),
-                         (DERIV_ROOT / sub / "anat" / f"{sub}_ct_label-mandible_seg.nii.gz",
+        for src, dst in ((BIDS_ROOT / sub / "ct" / f"{sub}_ct.nii.gz", img_ts / f"{cid}_0000.nii.gz"),
+                         (DERIV_ROOT / sub / "ct" / f"{sub}_ct_label-mandible_seg.nii.gz",
                           lab_ts / f"{cid}.nii.gz")):
             if dst.exists():
                 continue
@@ -270,7 +270,10 @@ def main() -> None:
              "n_box_expanded": sum(r["box_expanded"] for r in rows),
              "n_gt_exceeds_max_training_fov": sum(r["gt_exceeds_max_training_fov"] for r in rows),
              "cases_losing_gt_voxels": lost, "not_ras": bad, "cases": rows}
-    (BIDS_ROOT / "prepare_audit.json").write_text(json.dumps(audit, indent=2))
+    # Kept next to the BIDS leaf, not inside it (not part of the git-annex dataset).
+    audit_dir = BIDS_ROOT.parent / "_not_in_annex"
+    audit_dir.mkdir(exist_ok=True)
+    (audit_dir / "prepare_audit.json").write_text(json.dumps(audit, indent=2))
     print(f"prepared {len(rows)}, failed {len(failed)}")
     print(f"  box expanded for {audit['n_box_expanded']} case(s); "
           f"{audit['n_gt_exceeds_max_training_fov']} exceed the largest training FOV")

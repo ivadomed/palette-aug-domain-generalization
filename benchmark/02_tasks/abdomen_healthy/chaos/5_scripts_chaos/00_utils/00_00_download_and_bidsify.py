@@ -24,9 +24,9 @@ BIDS output (1_BIDS_chaos/abdomen-chaos/):
   sub-MR##/anat/  sub-MR##_acq-inphase_T1w.nii.gz  (+ .json)   <- T1DUAL InPhase
                   sub-MR##_acq-outphase_T1w.nii.gz (+ .json)   <- T1DUAL OutPhase
                   sub-MR##_T2w.nii.gz              (+ .json)   <- T2SPIR
-  sub-CT##/anat/  sub-CT##_CT.nii.gz               (+ .json)
+  sub-CT##/ct/    sub-CT##_ct.nii.gz               (+ .json)   draft BIDS CT layout (BEP024)
   derivatives/labels/sub-MR##/anat/sub-MR##_<entities>_label-organs_dseg.nii.gz
-                     sub-CT##/anat/sub-CT##_CT_label-liver_seg.nii.gz
+                     sub-CT##/ct/sub-CT##_ct_label-liver_seg.nii.gz
   dataset_description.json   participants.tsv
 
 In/out-phase are treated as two DISTINCT modalities (domain generalisation).
@@ -194,8 +194,8 @@ def bidsify_mr(chaos_id: str, mr_dir: Path, participants: list[dict]) -> None:
 def bidsify_ct(chaos_id: str, ct_dir: Path, participants: list[dict]) -> None:
     label = f"CT{int(chaos_id):02d}"
     sub = f"sub-{label}"
-    anat = BIDS_ROOT / sub / "anat"
-    deriv = DERIVATIVES_DIR / sub / "anat"
+    anat = BIDS_ROOT / sub / "ct"            # draft BIDS CT datatype folder (BEP024)
+    deriv = DERIVATIVES_DIR / sub / "ct"
 
     ground = ct_dir / "Ground"
     img, files = read_dicom_series(ct_dir / "DICOM_anon")
@@ -208,9 +208,9 @@ def bidsify_ct(chaos_id: str, ct_dir: Path, participants: list[dict]) -> None:
         return ground / f"liver_GT_{name_rank[str(p)]:03d}.png"
 
     lab = build_label_volume(img, files, mask_for_file=mask_for, decode=decode_ct_mask)
-    write_nii(img, anat / f"{sub}_CT.nii.gz")
-    write_json(anat / f"{sub}_CT.json", _sidecar("CT", "portal-venous abdominal CT"))
-    write_nii(lab, deriv / f"{sub}_CT_label-liver_seg.nii.gz")
+    write_nii(img, anat / f"{sub}_ct.nii.gz")
+    write_json(anat / f"{sub}_ct.json", _sidecar("CT", "portal-venous abdominal CT"))
+    write_nii(lab, deriv / f"{sub}_ct_label-liver_seg.nii.gz")
 
     participants.append({"label": label, "modality": "CT", "chaos_id": chaos_id})
 
@@ -266,7 +266,7 @@ def _write_derivatives_description() -> None:
         "GeneratedBy": [{"Name": "CHAOS Challenge"}],
         "Description": (
             "Two disjoint label sets, per CHAOS's own task split (see README.md in "
-            "this directory): CT files (*_CT_label-liver_seg.nii.gz) are binary "
+            "this directory): CT files (*_ct_label-liver_seg.nii.gz) are binary "
             "liver-only masks; MR files (*_label-organs_dseg.nii.gz) are 4-class "
             "discrete organ segmentations, encoded per LabelMapMR below."
         ),

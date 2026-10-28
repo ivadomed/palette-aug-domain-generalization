@@ -104,7 +104,8 @@ BIDS_ROOT = Path(os.environ["BIDS_ROOT"])
 NNUNET_RAW = Path(os.environ["nnUNet_raw"])
 N_WORKERS = int(os.environ.get("HANSEG_WORKERS", "6"))
 TMPDIR = Path(os.environ.get("SLURM_TMPDIR", "/tmp")) / "hanseg_mr"
-QC_DIR = BIDS_ROOT / "qc_mr"
+# Outside the BIDS leaf since 2026-10-26 (git-annex upload prep), like the audit below.
+QC_DIR = BIDS_ROOT.parent / "_not_in_annex" / "qc_mr"
 
 TARGET_SPACING = float(os.environ.get("HANSEG_TARGET_SPACING", "0.6"))
 BOX_MM = np.array([144.0, 128.0, 80.0])          # same box as the CT arm
@@ -379,7 +380,7 @@ def main() -> None:
              "gt_provenance": "registration-propagated from CT (NOT natively drawn)",
              "qc_tissue_frac_threshold": QC_TISSUE_FRAC,
              "n_qc_pass": len(passed), "qc_excluded": excluded, "cases": rows}
-    (BIDS_ROOT / "prepare_mr_audit.json").write_text(json.dumps(audit, indent=2))
+    (BIDS_ROOT.parent / "_not_in_annex" / "prepare_mr_audit.json").write_text(json.dumps(audit, indent=2))
     tf = [r["tissue_frac"] for r in rows]
     print(f"prepared {len(rows)}, failed {len(failed)}; QC pass {len(passed)}/{len(rows)}")
     print(f"  mandible-local refinement OK on {n_refined}/{len(rows)}")

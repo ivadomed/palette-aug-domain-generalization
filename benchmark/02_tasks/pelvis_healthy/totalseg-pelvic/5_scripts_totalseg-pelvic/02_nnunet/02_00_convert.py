@@ -62,7 +62,9 @@ BIDS_LABEL = {
     "iliopsoas_left": "iliopsoasLeft", "iliopsoas_right": "iliopsoasRight",
 }
 
-MODALITY_SUFFIX = {"ct": "CT", "mri": "MRI"}
+MODALITY_SUFFIX = {"ct": "ct", "mri": "MRI"}   # BIDS suffix (CT: draft BIDS CT, BEP024)
+MODALITY_DATATYPE = {"ct": "ct", "mri": "anat"}  # BIDS datatype folder (CT: draft sub-X/ct/)
+DATATYPE_BY_SUFFIX = {MODALITY_SUFFIX[m]: MODALITY_DATATYPE[m] for m in MODALITY_SUFFIX}
 MODALITY_OUT = {"ct": "Dataset130_TotalsegPelvic_CT", "mri": "Dataset131_TotalsegPelvic_MRI"}
 
 
@@ -84,7 +86,7 @@ def _merge_labels(sub: str, suffix: str):
     ref_affine = None
     ref_header = None
     for name, label_id in LABEL_MAP.items():
-        p = DERIV_DIR / sub / "anat" / f"{sub}_{suffix}_label-{BIDS_LABEL[name]}_seg.nii.gz"
+        p = DERIV_DIR / sub / DATATYPE_BY_SUFFIX[suffix] / f"{sub}_{suffix}_label-{BIDS_LABEL[name]}_seg.nii.gz"
         img = nib.load(str(p))
         arr = np.asarray(img.dataobj)
         if combined is None:
@@ -133,7 +135,7 @@ def _convert_modality(modality: str) -> None:
     n_ok, n_bad = 0, []
     for i, case in enumerate(cases):
         sub = _sub_id(modality, case)
-        img_src = BIDS_ROOT / sub / "anat" / f"{sub}_{suffix}.nii.gz"
+        img_src = BIDS_ROOT / sub / MODALITY_DATATYPE[modality] / f"{sub}_{suffix}.nii.gz"
         if not img_src.exists():
             n_bad.append((case, "missing BIDS image"))
             continue

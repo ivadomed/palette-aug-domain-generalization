@@ -199,6 +199,7 @@ def crop(img: nib.Nifti1Image, box):
     aff[:3, 3] = aff[:3, 3] + aff[:3, :3] @ np.array([b[0] for b in box], dtype=float)
     out = nib.Nifti1Image(np.ascontiguousarray(sub), aff)
     out.header.set_zooms(img.header.get_zooms()[:3])
+    out.header.set_xyzt_units("mm")   # a fresh header has no units (BIDS validator NIFTI_UNIT)
     out.set_data_dtype(img.get_data_dtype())
     return out
 
@@ -359,6 +360,7 @@ def _save(img: nib.Nifti1Image, dst: Path, as_uint8: bool = False) -> None:
     if as_uint8:
         arr = np.asanyarray(img.dataobj).astype(np.uint8)
         img = nib.Nifti1Image(arr, img.affine)
+        img.header.set_xyzt_units("mm")
         img.set_data_dtype(np.uint8)
     nib.save(img, str(dst))
 

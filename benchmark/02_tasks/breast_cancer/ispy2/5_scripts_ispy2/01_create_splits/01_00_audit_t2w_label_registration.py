@@ -63,6 +63,9 @@ import nibabel as nib
 DATASET_ROOT = Path(__file__).resolve().parents[2]
 BIDS_ROOT = DATASET_ROOT / "1_BIDS_ispy2" / "breast-ispy2"
 DERIV_ROOT = BIDS_ROOT / "derivatives" / "labels"
+# The registration-derived T2w masks this script audits were moved out of the BIDS tree (2026-10-26,
+# git-annex upload prep: wrong for most patients, superseded by desc-sharedframe).
+OLD_T2W_ROOT = DATASET_ROOT / "1_BIDS_ispy2" / "_not_in_annex" / "old_registration_T2w_masks"
 SPLITS = DATASET_ROOT / "4_splits_ispy2"
 EXCLUSIONS = SPLITS / "unilateral_fov_exclusions.json"
 N_WORKERS = int(os.environ.get("ISPY2_FOV_WORKERS", "16"))
@@ -98,7 +101,7 @@ def _one(args) -> dict:
     try:
         t2 = nib.load(str(BIDS_ROOT / sub / "anat" / f"{sub}_T2w.nii.gz"))
         l1 = nib.load(str(DERIV_ROOT / sub / "anat" / f"{sub}_acq-firstpost_T1w_label-lesion_seg.nii.gz"))
-        l2 = nib.load(str(DERIV_ROOT / sub / "anat" / f"{sub}_T2w_label-lesion_seg.nii.gz"))
+        l2 = nib.load(str(OLD_T2W_ROOT / sub / "anat" / f"{sub}_T2w_label-lesion_seg.nii.gz"))
         m1 = np.asanyarray(l1.dataobj) > 0
         m2 = np.asanyarray(l2.dataobj) > 0
         r = {"sub": sub, "fov": fov, "n1": int(m1.sum()), "n2": int(m2.sum())}

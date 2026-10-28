@@ -11,7 +11,7 @@ Test groups (from 4_splits_chaos/test_cases.json):
   - MR internal-test patients → t1in, t1out, t2spir   (4 organs scoreable)
   - all CT patients           → ct                     (liver only scoreable)
 
-Reads:  ../../1_BIDS_chaos/abdomen-chaos/sub-<case>/anat/  (+ derivatives masks)
+Reads:  ../../1_BIDS_chaos/abdomen-chaos/sub-<case>/anat/ (MR) and sub-<case>/ct/ (CT)  (+ derivatives masks)
 Writes: ../../2_nnUNet_chaos/raw/<DS_NAME>/imagesTs_<modality>/{case}_0000.nii.gz
                                           /labelsTs_<modality>/{case}.nii.gz
 
@@ -39,8 +39,11 @@ MODALITY_SUFFIX = {
     "t1in":   "acq-inphase_T1w",
     "t1out":  "acq-outphase_T1w",
     "t2spir": "T2w",
-    "ct":     "CT",
+    "ct":     "ct",
 }
+
+# modality tag → BIDS datatype folder: CT follows the draft BIDS CT extension (BEP024, sub-X/ct/).
+MODALITY_DATATYPE = {"t1in": "anat", "t1out": "anat", "t2spir": "anat", "ct": "ct"}
 
 # modality tag → derivative mask filename suffix (without sub- prefix / extension).
 # CT is a binary liver-only mask (seg + label-liver); MR is 4-class discrete organ
@@ -49,7 +52,7 @@ MODALITY_LABEL_SUFFIX = {
     "t1in":   "acq-inphase_T1w_label-organs_dseg",
     "t1out":  "acq-outphase_T1w_label-organs_dseg",
     "t2spir": "T2w_label-organs_dseg",
-    "ct":     "CT_label-liver_seg",
+    "ct":     "ct_label-liver_seg",
 }
 
 
@@ -87,8 +90,9 @@ def main() -> None:
         n_ok, missing = 0, []
         for case in cases:
             sub = f"sub-{case}"
-            img = BIDS_ROOT / sub / "anat" / f"{sub}_{suffix}.nii.gz"
-            seg = DERIV_DIR / sub / "anat" / f"{sub}_{MODALITY_LABEL_SUFFIX[mod]}.nii.gz"
+            dtype_dir = MODALITY_DATATYPE[mod]
+            img = BIDS_ROOT / sub / dtype_dir / f"{sub}_{suffix}.nii.gz"
+            seg = DERIV_DIR / sub / dtype_dir / f"{sub}_{MODALITY_LABEL_SUFFIX[mod]}.nii.gz"
             if not img.exists() or not seg.exists():
                 missing.append(case)
                 continue

@@ -41,8 +41,8 @@ def _case_id(sub: str) -> str:
 
 def convert(sub: str) -> str:
     cid = _case_id(sub)
-    img = BIDS_ROOT / sub / "anat" / f"{sub}_acq-cbct_ct.nii.gz"
-    seg = DERIV / sub / "anat" / f"{sub}_acq-cbct_ct_label-maxillofacial_seg.nii.gz"
+    img = BIDS_ROOT / sub / "ct" / f"{sub}_acq-cbct_ct.nii.gz"
+    seg = DERIV / sub / "ct" / f"{sub}_acq-cbct_ct_label-maxillofacial_dseg.nii.gz"
     for p in (img, seg):
         if not p.exists():
             raise FileNotFoundError(p)

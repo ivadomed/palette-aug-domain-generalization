@@ -101,6 +101,7 @@ def _one(args) -> dict:
         vol2 = float(new.sum()) * v2
         img = nib.Nifti1Image(new, t2.affine)
         img.header.set_zooms(t2.header.get_zooms()[:3])
+        img.header.set_xyzt_units("mm")   # a fresh header has no units (BIDS validator NIFTI_UNIT)
         img.set_data_dtype(np.uint8)
         dst = DERIV_ROOT / sub / "anat" / f"{sub}_{OUT_LABEL_SUFFIX}_label-lesion_seg.nii.gz"
         dst.parent.mkdir(parents=True, exist_ok=True)

@@ -3,8 +3,8 @@
 Build the FOV-matched PDDCA CT test set for toothfairy2 CBCT models.
 
 Outputs
-  BIDS      <BIDS_ROOT>/sub-<case>/anat/sub-<case>_ct.nii.gz
-            <BIDS_ROOT>/derivatives/labels/sub-<case>/anat/sub-<case>_ct_label-mandible_seg.nii.gz
+  BIDS      <BIDS_ROOT>/sub-<case>/ct/sub-<case>_ct.nii.gz
+            <BIDS_ROOT>/derivatives/labels/sub-<case>/ct/sub-<case>_ct_label-mandible_seg.nii.gz
   nnUNet    <nnUNet_raw>/imagesTs_ct/pddca_<case>_0000.nii.gz  (+ labelsTs_ct/)
 
 WHY THIS DATASET AND WHY IT LOOKS LIKE THE HANSEG ONE
@@ -179,8 +179,8 @@ def prepare_one(case: str, zpath_s: str, img_m: str, seg_m: str) -> dict:
     seg_r = _resample(seg_i, is_label=True)
 
     sub = f"sub-{case}"
-    a_dir = BIDS_ROOT / sub / "anat"; a_dir.mkdir(parents=True, exist_ok=True)
-    d_dir = DERIV_ROOT / sub / "anat"; d_dir.mkdir(parents=True, exist_ok=True)
+    a_dir = BIDS_ROOT / sub / "ct"; a_dir.mkdir(parents=True, exist_ok=True)     # draft BIDS CT layout (BEP024)
+    d_dir = DERIV_ROOT / sub / "ct"; d_dir.mkdir(parents=True, exist_ok=True)
     out_img = a_dir / f"{sub}_ct.nii.gz"
     out_seg = d_dir / f"{sub}_ct_label-mandible_seg.nii.gz"
     sitk.WriteImage(img_r, str(out_img), useCompression=True)
@@ -220,9 +220,9 @@ def main() -> None:
     img_ts.mkdir(parents=True, exist_ok=True); lab_ts.mkdir(parents=True, exist_ok=True)
     for r in rows:
         sub = r["sub"]
-        shutil.copyfile(BIDS_ROOT / sub / "anat" / f"{sub}_ct.nii.gz",
+        shutil.copyfile(BIDS_ROOT / sub / "ct" / f"{sub}_ct.nii.gz",
                         img_ts / f"pddca_{r['case']}_0000.nii.gz")
-        shutil.copyfile(DERIV_ROOT / sub / "anat" / f"{sub}_ct_label-mandible_seg.nii.gz",
+        shutil.copyfile(DERIV_ROOT / sub / "ct" / f"{sub}_ct_label-mandible_seg.nii.gz",
                         lab_ts / f"pddca_{r['case']}.nii.gz")
 
     bad = [r["case"] for r in rows if r["orientation"] != "RAS" or r["label_orientation"] != "RAS"]
@@ -230,7 +230,10 @@ def main() -> None:
              "target_spacing_mm": TARGET_SPACING, "box_mm": BOX_MM.tolist(),
              "max_box_mm": MAX_BOX_MM.tolist(), "margin_mm": MARGIN_MM,
              "non_RAS": bad, "errors": errs, "cases": rows}
-    (BIDS_ROOT / "prepare_audit.json").write_text(json.dumps(audit, indent=2))
+    # Kept next to the BIDS leaf, not inside it (not part of the git-annex dataset).
+    audit_dir = BIDS_ROOT.parent / "_not_in_annex"
+    audit_dir.mkdir(exist_ok=True)
+    (audit_dir / "prepare_audit.json").write_text(json.dumps(audit, indent=2))
 
     kept = [r["gt_voxels_kept_frac"] for r in rows]
     print(f"\n[pddca] {len(rows)} ok / {len(errs)} failed")

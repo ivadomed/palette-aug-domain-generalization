@@ -81,7 +81,8 @@ def main() -> int:
         is_ct = sub.startswith("sub-CT")
         if is_ct:
             n_ct += 1
-            check_pair(anat / f"{sub}_CT.nii.gz", deriv / f"{sub}_CT_label-liver_seg.nii.gz", True, errs)
+            check_pair(BIDS / sub / "ct" / f"{sub}_ct.nii.gz",
+                       DERIV / sub / "ct" / f"{sub}_ct_label-liver_seg.nii.gz", True, errs)
         else:
             n_mr += 1
             in_m = check_pair(anat / f"{sub}_acq-inphase_T1w.nii.gz",

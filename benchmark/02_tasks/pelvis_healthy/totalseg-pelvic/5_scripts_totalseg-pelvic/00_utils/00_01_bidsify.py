@@ -11,12 +11,12 @@ CT and MRI are UNPAIRED, disjoint cohorts (different patients, like chaos's CT/M
 same pattern chaos uses (sub-CT##/sub-MR## disjoint id spaces). Here: sub-ct<id>/sub-mri<id>.
 
 Per case: writes the anat image (already correctly reoriented in most cases, see below)
-plus the 10 individual pelvic/hip structure masks UNMERGED (one file per structure, BIDS
+plus the 11 individual pelvic/hip structure masks UNMERGED (one file per structure, BIDS
 "label-<name>_seg.nii.gz" derivative convention -- same shape as liverhccseg's
 00_01_bidsify.py) -- merging into one multiclass nnU-Net label happens downstream in
 02_nnunet/02_00_convert.py, not here.
 
-Source of the 10 masks: MUST be (re)fetched from the Zenodo archives -- the original
+Source of the 11 masks: MUST be (re)fetched from the Zenodo archives -- the original
 conversion pass merged them in-memory and never wrote the unmerged per-structure files to
 disk, so there is no local copy to reuse for the derivative layer even for cases whose
 merged nnUNet output already exists. The anat image itself IS reused from the existing
@@ -58,7 +58,8 @@ CT_ZIP = Path(os.environ.get("TOTALSEG_CT_ZIP", "/scratch/paulh/totalseg_preflig
 MRI_ZIP = Path(os.environ.get("TOTALSEG_MRI_ZIP", "/scratch/paulh/totalseg_preflight/mri.zip"))
 MODALITY_URLS = {"ct": CT_ZENODO_URL, "mri": MRI_ZENODO_URL}
 MODALITY_ZIPS = {"ct": CT_ZIP, "mri": MRI_ZIP}
-MODALITY_SUFFIX = {"ct": "CT", "mri": "MRI"}  # non-standard BIDS suffix, same pattern chaos uses for _CT
+MODALITY_SUFFIX = {"ct": "ct", "mri": "MRI"}  # ct: draft BIDS CT suffix (BEP024); MRI: non-standard, sequence unknown (see README)
+MODALITY_DATATYPE = {"ct": "ct", "mri": "anat"}  # BIDS datatype folder per modality (CT: draft sub-X/ct/)
 MODALITY_IMG_MEMBER = {"ct": "ct.nii.gz", "mri": "mri.nii.gz"}
 OLD_DATASET_DIR = {"ct": "Dataset130_TotalsegPelvic_CT", "mri": "Dataset131_TotalsegPelvic_MRI"}
 
@@ -146,7 +147,7 @@ def _write_dataset_descriptions() -> None:
     _write_json(BIDS_ROOT / "dataset_description.json", {
         "Name": "TotalSegmentator pelvic/hip subset (CT + MRI, unpaired)",
         "BIDSVersion": "1.9.0",
-        "License": "See LICENSE.md (CT: CC BY 4.0; MRI: CC BY-NC-SA 2.0 -- different "
+        "License": "See LICENSE (CT: CC BY 4.0; MRI: CC BY-NC-SA 2.0 -- different "
                    "licenses per modality, do not blend into one statement)",
         "Authors": ["Wasserthal, Jakob", "Akinci D'Antonoli, Tugba", "et al."],
         "ReferencesAndLinks": [
@@ -157,7 +158,7 @@ def _write_dataset_descriptions() -> None:
         "DatasetType": "raw",
     })
     _write_json(DERIV_DIR / "dataset_description.json", {
-        "Name": "TotalSegmentator pelvic/hip structure masks (10 classes, unmerged "
+        "Name": "TotalSegmentator pelvic/hip structure masks (11 classes, unmerged "
                 "per-structure binary masks; multiclass merge happens downstream at "
                 "nnU-Net conversion time)",
         "BIDSVersion": "1.9.0",
@@ -176,14 +177,14 @@ def _existing_image_bytes(modality: str, case: str) -> bytes | None:
 
 def _bidsify_case(zf: zipfile.ZipFile, modality: str, case: str) -> str:
     """Returns 'usable', 'empty', or 'missing'. On 'usable', writes the BIDS anat image
-    + 10 per-structure derivative masks; on 'empty'/'missing' writes nothing (and cleans
+    + 11 per-structure derivative masks; on 'empty'/'missing' writes nothing (and cleans
     up any partial output from an interrupted prior attempt)."""
     import numpy as np
 
     sub = _sub_id(modality, case)
     suffix = MODALITY_SUFFIX[modality]
-    img_dst = BIDS_ROOT / sub / "anat" / f"{sub}_{suffix}.nii.gz"
-    lbl_dsts = {name: DERIV_DIR / sub / "anat" / f"{sub}_{suffix}_label-{BIDS_LABEL[name]}_seg.nii.gz"
+    img_dst = BIDS_ROOT / sub / MODALITY_DATATYPE[modality] / f"{sub}_{suffix}.nii.gz"
+    lbl_dsts = {name: DERIV_DIR / sub / MODALITY_DATATYPE[modality] / f"{sub}_{suffix}_label-{BIDS_LABEL[name]}_seg.nii.gz"
                 for name in STRUCTURES}
 
     member_prefix = f"{case}/"
@@ -192,7 +193,7 @@ def _bidsify_case(zf: zipfile.ZipFile, modality: str, case: str) -> str:
     if img_member not in names_in_case:
         return "missing"
 
-    # Fetch + merge (in memory only, to test emptiness) the 10 structure masks.
+    # Fetch + merge (in memory only, to test emptiness) the 11 structure masks.
     label_imgs = {}
     ref_affine = None
     any_nonzero = False
@@ -238,7 +239,7 @@ def _bidsify_case(zf: zipfile.ZipFile, modality: str, case: str) -> str:
     tmp.write_bytes(_to_gzip_bytes(image_img))
     os.replace(tmp, img_dst)
     _write_json(img_dst.with_suffix("").with_suffix(".json"),
-                {"Modality": suffix, "Description": f"TotalSegmentator source case {case}"})
+                {"Modality": {"ct": "CT", "mri": "MRI"}[modality], "Description": f"TotalSegmentator source case {case}"})
 
     for name, dst in lbl_dsts.items():
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +269,7 @@ def bidsify_modality(modality: str, target_usable: int | None) -> None:
                       f"({i}/{len(candidates)} candidates tried)")
                 break
             sub = _sub_id(modality, case)
-            img_dst = BIDS_ROOT / sub / "anat" / f"{sub}_{MODALITY_SUFFIX[modality]}.nii.gz"
+            img_dst = BIDS_ROOT / sub / MODALITY_DATATYPE[modality] / f"{sub}_{MODALITY_SUFFIX[modality]}.nii.gz"
             if img_dst.exists():
                 usable.append(case)
                 participants_rows.append(f"{sub}\t{case}\t{modality}")
@@ -293,6 +294,7 @@ def bidsify_modality(modality: str, target_usable: int | None) -> None:
     print(f"[bidsify][{modality}] wrote {manifest_path}")
 
     # participants.tsv is cumulative across modalities -- merge rather than overwrite.
+    # New rows get the 3 base columns only: re-run 00_03_add_mri_sequence_columns.py afterwards.
     ptsv = BIDS_ROOT / "participants.tsv"
     existing_rows = ptsv.read_text().splitlines() if ptsv.exists() else [participants_rows[0]]
     existing_subs = {line.split("\t")[0] for line in existing_rows[1:]}
