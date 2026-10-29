@@ -52,7 +52,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "00_00_utils"))  # sibling: 00_commun_scripts/00_00_utils
 from eval_folds import EVAL_FOLD_INDICES, filter_fold_dirs  # noqa: E402 — single source of truth, see eval_folds.py
 from stat_tests import (holm, macro_perm, macro_perm_design, macro_ci_design,  # noqa: E402 — shared math, see stat_tests.py
-                        stratum_arrays)
+                        stratum_arrays, scope_unit_to_contrast, UNPAIRED_CONTRAST_DATASETS)
 # Full significance reporting (OOD/IND/per-contrast breakdowns) lives in the
 # dedicated companion script benchmark/00_commun_scripts/00_03_evaluate/
 # significance_from_config.py (same config, run separately). This module only
@@ -231,8 +231,19 @@ def _dataset_ns(metrics_dir, idx: int) -> str:
     t2spir-trained model's metrics dirs) share one namespace — their case "MR05" is the
     same physical patient — while two different datasets never collide on a bare id like
     "01". A source outside `benchmark/` falls back to its position in the source list
-    (the same position across training modalities, distinct across sources)."""
-    m = re.search(r"benchmark/([^/]+)/", str(metrics_dir).replace("\\", "/"))
+    (the same position across training modalities, distinct across sources).
+
+    Known degeneracy (noted 2026-10-29, not changed): since the 2026-09-27 move to
+    benchmark/02_tasks/<task>/<dataset>/ the regex below returns "02_tasks" (archived:
+    "03_archive") for every dataset, so different datasets share one namespace; harmless as
+    long as no two datasets in one config share a bare case id. A dataset in
+    stat_tests.UNPAIRED_CONTRAST_DATASETS returns its real name (from 8_results_<name>) so
+    unit_of can scope its units by contrast."""
+    s = str(metrics_dir).replace("\\", "/")
+    m8 = re.search(r"/8_results_([^/]+)/", s + "/")
+    if m8 and m8.group(1) in UNPAIRED_CONTRAST_DATASETS:
+        return m8.group(1)   # unit_of must recognise it (2026-10-29, see stat_tests.scope_unit_to_contrast)
+    m = re.search(r"benchmark/([^/]+)/", s)
     return m.group(1) if m else f"src{idx}"
 
 
@@ -481,14 +492,19 @@ def unit_of(case_tag: str, contrast: str | None = None) -> str:
     dataset whose case id never ends with its own contrast name (confirmed: chaos,
     brats, open-ms, toothfairy2, ispy2 case ids don't). See project memory
     project_onharmony_significance_rerun_20260921 / project_ladder_fold3_fix_applied_20261001
-    for how this was found."""
+    for how this was found.
+
+    2026-10-29: for a dataset with unpaired per-contrast cohorts (stat_tests.
+    UNPAIRED_CONTRAST_DATASETS: totalseg-pelvic, CT and MRI test sets both hold an "s0015")
+    the unit also carries the contrast ("totalseg-pelvic|s0015@mri"), so the two cohorts'
+    patients no longer merge across columns; every other dataset's unit is unchanged."""
     tag = case_tag.split("::", 1)[-1]
     if contrast:
         item = contrast.rsplit("/", 1)[-1]
         suffix = f"_{item}"
         if tag.endswith(suffix):
             tag = tag[: -len(suffix)]
-    return tag
+    return scope_unit_to_contrast(tag, contrast)
 
 
 def _leaf_entries(ref_raw: dict, comp_raw: dict, leaf) -> list:

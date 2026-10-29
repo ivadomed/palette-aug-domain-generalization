@@ -19,6 +19,9 @@ plausible-looking one):
      convention), not an equal-weight-per-label average of already-fold-averaged
      numbers — the 2026-09-21 label-averaging regression: a label with fewer valid
      folds than another must NOT get the same weight as a fully-covered one.
+  7. across tasks the unit is the setting (exact sign test over settings)
+  8. unpaired per-contrast cohorts (totalseg-pelvic CT vs MRI, both with an s0015) are NOT
+     merged; every deliberate merge (I-SPY2 FOV variants, sessions, contrasts) is unchanged
 """
 import importlib.util
 import sys
@@ -267,9 +270,65 @@ def test_cross_task_unit_is_setting():
     print("ok 7  cross-task test = exact sign test over settings (n = #settings, not #patients)")
 
 
+def test_unpaired_contrast_cohorts_not_merged():
+    """2026-10-29: totalseg-pelvic's CT and MRI test sets come from two separately numbered
+    TotalSegmentator releases (unpaired cohorts) and share the id s0015: two people, so two
+    units (aggregate_from_config.unit_of / build_design and ladder_ood_common._patient_key /
+    _merge_patient_pairs). The same CT patient scored by both trained models stays ONE unit,
+    a Pelvis key without its contrast raises, and every other dataset's merge is unchanged."""
+    spec = importlib.util.spec_from_file_location("ladder_ood_common", HERE / "ladder_ood_common.py")
+    lad = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lad)
+    pk, uo = lad._patient_key, agg.unit_of
+    # Pelvis: CT s0015 != MRI s0015, in both helpers, with bare and "<training>/<item>" labels
+    assert pk("totalseg-pelvic|s0015", "ct") != pk("totalseg-pelvic|s0015", "mri")
+    assert pk("totalseg-pelvic|s0015", "mri/ct") == pk("totalseg-pelvic|s0015", "ct") == "totalseg-pelvic|s0015@ct"
+    assert pk("totalseg-pelvic|s0015", "totalseg-pelvic/mri") == "totalseg-pelvic|s0015@mri"
+    assert uo("ct::totalseg-pelvic|s0015", "ct") != uo("mri::totalseg-pelvic|s0015", "mri")
+    assert uo("ct::totalseg-pelvic|s0015", "ct") == uo("mri::totalseg-pelvic|s0015", "ct")   # one CT patient, two models
+    for fn, key in ((pk, "totalseg-pelvic|s0015"), (uo, "ct::totalseg-pelvic|s0015")):
+        try:
+            fn(key)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{fn.__name__}: a Pelvis key without its contrast must raise")
+    # the source namespace: Pelvis gets its own name, every other dataset keeps the old one
+    root = "/p/benchmark/02_tasks/{}/{}/8_results_{}/02_metrics/m/c"
+    assert agg._dataset_ns(root.format("pelvis_healthy", "totalseg-pelvic", "totalseg-pelvic"), 0) == "totalseg-pelvic"
+    assert agg._dataset_ns(root.format("abdomen_healthy", "chaos", "chaos"), 0) == "02_tasks"
+    # every other deliberate merge unchanged (same outputs as before the fix)
+    assert pk("ispy2|ispy2_102011_uni", "t2w") == pk("ispy2|ispy2_102011_bil", "t2w") == "ispy2|ispy2_102011"
+    assert pk("ispy2|ispy2_102011_uni") == "ispy2|ispy2_102011"                           # no contrast: fine
+    assert pk("on-harmony|sub-1_ses-A_T1w", "T1w") == pk("on-harmony|sub-1_ses-A_bold", "bold") == "on-harmony|sub-1_ses-A"
+    assert uo("T1w::on-harmony|sub-1_ses-A_T2w", "T2w") == uo("T2w::on-harmony|sub-1_ses-A_bold", "bold")
+    assert pk("chaos|MR05", "t1in") == pk("chaos|MR05", "t1out") == pk("chaos|MR05") == "chaos|MR05"
+    assert uo("t1in::02_tasks|MR05", "t1in") == uo("t2spir::02_tasks|MR05", "t1out") == "02_tasks|MR05"
+    assert pk("brats2024-glioma|BraTS-GLI-00001-000", "t2w") == pk("brats2024-glioma|BraTS-GLI-00001-000", "t1c")
+    assert pk("hanseg|case_01", "hanseg/ct") == pk("hanseg|case_01", "hanseg/mrt1")
+    # end to end: build_design (headline tests) and _merge_patient_pairs (ladder engine)
+    rng = np.random.default_rng(8)
+    R, C = {}, {}
+    for col, mods in (("ct", ("ct", "mri")), ("mri", ("ct", "mri"))):     # each test cohort scored by both models
+        for mod in mods:
+            other = "s0020" if col == "ct" else "s0030"
+            r, c = _pair(rng, [f"{mod}::totalseg-pelvic|s0015", f"{mod}::totalseg-pelvic|{other}"], 0.02, col=col)
+            R.setdefault(col, {}).update(r[col]); C.setdefault(col, {}).update(c[col])
+    e, K = agg.build_design({"ct": "ct", "mri": "mri"}, R, C, "patient")
+    assert K == 2 and len({x[2] for x in e}) == 4, sorted({x[2] for x in e})   # s0015@ct, s0015@mri, s0020@ct, s0030@mri
+    x, _ = lad._merge_patient_pairs({"ct/mri": {"totalseg-pelvic|s0015": (0.5, 0.6)},
+                                     "mri/ct": {"totalseg-pelvic|s0015": (0.3, 0.2)}})
+    assert x.size == 2
+    x, _ = lad._merge_patient_pairs({"t1in": {"chaos|MR05": (0.5, 0.6)}, "t1out": {"chaos|MR05": (0.3, 0.2)}})
+    assert x.size == 1
+    print("ok 8  Pelvis CT s0015 != MRI s0015 (unit_of, _patient_key, build_design, _merge_patient_pairs); "
+          "I-SPY2 FOV / on-harmony / CHAOS / BraTS / HaN-Seg merges unchanged")
+
+
 if __name__ == "__main__":
     for t in (test_flat_matches_legacy, test_variance_matches_monte_carlo, test_tail_exact_and_monte_carlo,
               test_more_cases_shrink_variance, test_patient_units_merge, test_point_estimate_untouched,
-              test_label_flat_pool_not_equal_weight, test_cross_task_unit_is_setting):
+              test_label_flat_pool_not_equal_weight, test_cross_task_unit_is_setting,
+              test_unpaired_contrast_cohorts_not_merged):
         t()
     print("all significance-unit checks passed")

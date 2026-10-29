@@ -27,6 +27,33 @@ import numpy as np
 from scipy import stats
 
 
+# ── patient identity across test contrasts (2026-10-29) ────────────────────────────────
+# The patient-unit helpers (aggregate_from_config.unit_of, ladder_ood_common._patient_key)
+# treat one case id under two test contrasts of the SAME dataset as one physical patient
+# (CHAOS T1in/T1out, BraTS sequences, on-harmony sessions, ...). That is wrong for a dataset
+# whose contrasts are independent, unpaired cohorts that number their subjects separately:
+# totalseg-pelvic's CT and MRI releases of TotalSegmentator both start at s0001, and its test
+# sets share the id s0015 (two different people). For these datasets the unit is
+# "<dataset>|<case>@<contrast>": the same case id under the same contrast (e.g. one CT test
+# patient scored by the CT- and the MRI-trained model) still merges.
+UNPAIRED_CONTRAST_DATASETS = frozenset({"totalseg-pelvic"})
+
+
+def scope_unit_to_contrast(unit: str, contrast: str | None) -> str:
+    """`unit` ("<dataset>|<case>", contrast suffixes already stripped) unchanged, unless its
+    dataset is in UNPAIRED_CONTRAST_DATASETS: then "<unit>@<item>" with item = the bare test
+    contrast (the part after the last "/" of a "<dataset>/<item>" or "<training>/<item>" label).
+    Raises on such a unit without a contrast, so a caller that drops the contrast cannot
+    silently merge two cohorts' patients again."""
+    ns = unit.split("|", 1)[0] if "|" in unit else ""
+    if ns not in UNPAIRED_CONTRAST_DATASETS:
+        return unit
+    if not contrast:
+        raise ValueError(f"patient unit {unit!r}: {ns} has unpaired per-contrast cohorts, so its patient "
+                         f"identity needs the test contrast (pass contrast=...)")
+    return f"{unit}@{contrast.rsplit('/', 1)[-1]}"
+
+
 def wilcoxon_p(x: np.ndarray, y: np.ndarray) -> float:
     """Two-sided Wilcoxon signed-rank p-value for paired arrays x, y.
 

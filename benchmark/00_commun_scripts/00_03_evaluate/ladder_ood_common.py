@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "00_00_utils"))
-from stat_tests import holm, wilcoxon_p, fmt_p  # noqa: E402 — shared math, see stat_tests.py
+from stat_tests import holm, wilcoxon_p, fmt_p, scope_unit_to_contrast  # noqa: E402 — shared math, see stat_tests.py
 from eval_folds import filter_fold_dirs  # noqa: E402 — single source of truth, see eval_folds.py
 
 # ── plot styling, matched to the paper's fig:ladder ───────────────────────────
@@ -476,14 +476,20 @@ def _patient_key(case_key: str, contrast: str | None = None) -> str:
     toothfairy2/ispy2's case ids end with their own contrast name. Same
     inconsistency as aggregate_from_config.unit_of's identical fix; see project
     memory project_onharmony_significance_rerun_20260921 /
-    project_ladder_fold3_fix_applied_20261001 for how this was found."""
+    project_ladder_fold3_fix_applied_20261001 for how this was found.
+
+    2026-10-29: a dataset whose test contrasts are unpaired cohorts with their own subject
+    numbering (stat_tests.UNPAIRED_CONTRAST_DATASETS: totalseg-pelvic, whose CT and MRI
+    test sets both contain an "s0015") gets the contrast in its key
+    ("totalseg-pelvic|s0015@mri"); such a key without `contrast` raises (stat_tests.
+    scope_unit_to_contrast). Every other dataset's key is unchanged."""
     key = _FOV_VARIANT_RE.sub("", case_key)
     if contrast:
         item = contrast.rsplit("/", 1)[-1]
         suffix = f"_{item}"
         if key.endswith(suffix):
             key = key[: -len(suffix)]
-    return key
+    return scope_unit_to_contrast(key, contrast)
 
 
 def _merge_patient_pairs(pairs_by_contrast: dict) -> tuple:
