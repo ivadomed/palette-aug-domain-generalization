@@ -57,6 +57,9 @@ for CAT in nnUNet auglab; do
     # auglabAug_v26_6_2_* is the HEADLINE method, not a ladder rung — don't let the
     # v26_6_2 pattern above swallow it.
     case "${RID}" in *auglabAug_v26_6_2*) SUB="" ;; esac
+    # FORCE_SUB (optional, set even to ""; 2026-10-29, as in the hanseg / toothfairy2 twins): place the output here instead
+    # of the run-id routing above (the flatauglab arm "..._auglabAugFlat_v26_6_2_train050_val000_..." matches the rung pattern).
+    if [ -n "${FORCE_SUB+x}" ]; then SUB="${FORCE_SUB:+/${FORCE_SUB}}"; fi
 
     for F in 0 1 2; do
       for IT in ${ITEMS}; do
