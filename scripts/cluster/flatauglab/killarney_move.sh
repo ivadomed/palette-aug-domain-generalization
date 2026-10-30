@@ -13,12 +13,19 @@
 #     syncback (klogin02 only: needs its Vulcan master): every 30 min, each finished fold dir (final + best, latest gone, final > 10 min)
 #     is rsynced (--delete, that fold dir only) into the SAME Vulcan run dir and md5-verified -> Vulcan's moved_poller.sh (LOCAL_FOLDS
 #     0 1 2) sees the folds done and the normal post chain runs. Marker <kmove>/B3/<fold name>.SYNCED_TO_VULCAN.
+# PACK (default B3) selects the pack: 2026-10-30 evening PACK=B1 (on-harmony T1w x3, open-ms flair x3, pansegdata t1wce folds 0-1) took
+# the same path: TamIA segments cancelled, recorded + pulled + md5-verified on Vulcan by vulcan_move.sh (ONLY=B1), never submitted there;
+# prep writes the Vulcan marker vulcan_move/<PACK>/MOVED_TO_KILLARNEY (vulcan_move.sh submit then skips the pack) and pull refuses while
+# any Vulcan flataugmv job of the pack's folds is queued. Records <kmove>/<PACK>/; syncback lock syncback.lock (B3) / syncback_<PACK>.lock;
+# run each pack's syncback in its own scope (flatauglab-ksync for B3, flatauglab-ksync-<pack> otherwise), PACK exported.
 # AugLab: a detached clone at f018536 on Killarney scratch (the shared Killarney AugLab tree is 7b761b5 and is not touched); the cmd puts it
 # first on PYTHONPATH and reads the configs from it. Every module of the old tree exists in the pin (checked), so path order = pin wins.
 set -euo pipefail
 KREPO=/project/6102268/paulh/mri_synthesis_project; VREPO=/project/aip-jcohen/paulh/mri_synthesis_project
-KM=/scratch/paulh/flatauglab_kmove; P="${KM}/B3"; PIN=/scratch/paulh/flatauglab_pin/AugLab
-VMV=/scratch/paulh/flatauglab_20261028/vulcan_move/B3
+PACK="${PACK:-B3}"
+KM=/scratch/paulh/flatauglab_kmove; P="${KM}/${PACK}"; PIN=/scratch/paulh/flatauglab_pin/AugLab
+VMV="/scratch/paulh/flatauglab_20261028/vulcan_move/${PACK}"
+LOCK="${KM}/syncback.lock"; [ "${PACK}" = B3 ] || LOCK="${KM}/syncback_${PACK}.lock"
 vrun() { if [ "$(hostname -s)" = klogin02 ]; then ssh -n -o BatchMode=yes vulcan.alliancecan.ca "$1"
          else ssh -n klogin02 "ssh -o BatchMode=yes vulcan.alliancecan.ca $(printf '%q' "$1")"; fi; }
 RS_E="ssh klogin02 ssh -o BatchMode=yes"; [ "$(hostname -s)" = klogin02 ] && RS_E="ssh -o BatchMode=yes"
@@ -26,6 +33,7 @@ AUGLAB_SHA=f018536553ee096fb61d1bf566d70e89c5cec144
 CFG=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2FlatFillGPUTransform_train050.json; CFG_MD5=673c0114a1dde8c7a5d0339315fe1b40
 VCFG=transform_params_gpu_VALsynthonly_ImageContrastV26_6_2FlatFillGPUTransform.json; VCFG_MD5=3e4a2b74d2083950044f5eb4f1a37670
 VJOBS_B3="2030097 2030099 2030101 2030102 2030104 2030106 2030108 2030109 2030111 2030112"
+VJOBS=""; [ "${PACK}" = B3 ] && VJOBS="${VJOBS_B3}"
 MODE="${1:?usage: prep|pull|submit|status|syncback}"
 mkdir -p "${P}"
 clean_cmd() { sed -e 's/\\n/\n/g' -e "s/\\\\'//g" "$1"; }
@@ -35,6 +43,8 @@ if [ "${MODE}" = prep ]; then
   [ "$(git -C "${PIN}" rev-parse HEAD)" = "${AUGLAB_SHA}" ] && [ -z "$(git -C "${PIN}" status --porcelain)" ] || { echo "PIN not clean at ${AUGLAB_SHA}"; exit 1; }
   [ "$(md5sum < "${PIN}/auglab/configs/${CFG}" | cut -c1-32)" = "${CFG_MD5}" ] && [ "$(md5sum < "${PIN}/auglab/configs/${VCFG}" | cut -c1-32)" = "${VCFG_MD5}" ] || { echo "PIN config md5"; exit 1; }
   echo "[prep] pin ${PIN} at ${AUGLAB_SHA:0:7}, clean, configs ok"
+  vrun "test -f ${VMV}/index.tsv && grep -q '^PULLED' ${VMV}/PULL.log && test ! -f ${VMV}/JOBS.tsv" || { echo "Vulcan ${VMV}: not recorded+pulled, or already submitted on Vulcan"; [ "${PACK}" = B3 ] || exit 1; }
+  vrun "test -f ${VMV}/MOVED_TO_KILLARNEY || echo \"${PACK} MOVED_TO_KILLARNEY \$(date '+%F %T'): never submitted on Vulcan; trains on Killarney (killarney_move.sh PACK=${PACK})\" > ${VMV}/MOVED_TO_KILLARNEY; cat ${VMV}/MOVED_TO_KILLARNEY"
   rm -rf "${P}/vulcan_cmds"; mkdir -p "${P}/vulcan_cmds"
   vrun "cd ${VMV} && tar cf - index.tsv fold*_auglabAugFlat_*_194832.sh" | tar xf - -C "${P}/vulcan_cmds"
   : > "${P}/index.tsv"; bad=0
@@ -51,7 +61,10 @@ if [ "${MODE}" = prep ]; then
     pre=$(getv "$c" nnUNet_preprocessed); res=$(getv "$c" nnUNet_results); pp=$(getv "$c" PYTHONPATH)
     ok=OK; [ -z "${rest}" ] || ok="${ok},CMD_DIFF"; [ -d "${pre}" ] || ok="${ok},NO_PREPROC"; [[ "${pp}" == "${PIN}:"* ]] || ok="${ok},PIN_NOT_FIRST(${pp})"
     [ "$(md5sum < "$(getv "$c" AUGLAB_PARAMS_GPU_JSON)" | cut -c1-32)" = "${CFG_MD5}" ] || ok="${ok},CFG"
-    [ "$(md5sum < "$(getv "$c" AUGLAB_VAL_PARAMS_GPU_JSON)" | cut -c1-32)" = "${VCFG_MD5}" ] || ok="${ok},VCFG"
+    # a DualVal trainer carries the flat VAL config, any other trainer none (open-ms flair: nnUNetTrainerOpenMSAugLabDefault)
+    vc="$(getv "$c" AUGLAB_VAL_PARAMS_GPU_JSON)"; trn="$(printf '%s\n' "$c" | grep -o '\-tr [A-Za-z0-9_]*' | head -1 | cut -d' ' -f2)"
+    if [[ "${trn}" == *DualVal ]]; then [ -n "${vc}" ] && [ "$(md5sum < "${vc}" | cut -c1-32)" = "${VCFG_MD5}" ] || ok="${ok},VCFG"
+    else [ -z "${vc}" ] || ok="${ok},VCFG_SET(${trn})"; fi
     [[ "${res}" == "${KREPO}/benchmark/02_tasks/"*"/auglab/${name#fold?_}" ]] || ok="${ok},RESULTS(${res})"
     grep -q '/project/aip-jcohen' "${k}" && ok="${ok},VULCAN_PATH_LEFT"
     echo "   ${ok} ${name}"; [ -z "${rest}" ] || echo "${rest}" | sed 's/^/      /'; [ "${ok}" = OK ] || bad=1
@@ -72,8 +85,9 @@ fi
 
 if [ "${MODE}" = pull ]; then
   q="$(vrun "squeue -u paulh -h -o '%i %j %T'")"
-  live="$(echo "$q" | awk '{print $1}' | grep -xE "$(echo ${VJOBS_B3} | tr ' ' '|')" || true)"
-  [ -z "${live}" ] || { echo "REFUSING: Vulcan B3 jobs still queued: ${live}"; exit 1; }
+  live=""; [ -z "${VJOBS}" ] || live="$(echo "$q" | awk '{print $1}' | grep -xE "$(echo ${VJOBS} | tr ' ' '|')" || true)"
+  for n in $(awk -F'\t' '{print $3}' "${P}/index.tsv"); do live="${live}$(echo "$q" | grep -F " flataugmv_${n%%_auglabAugFlat*} " || true)"; done
+  [ -z "${live}" ] || { echo "REFUSING: Vulcan ${PACK} jobs still queued: ${live}"; exit 1; }
   while IFS=$'\t' read -r cmd log name done_; do
     kfold="$(dirname "${done_}")"; vfold="${kfold//${KREPO}/${VREPO}}"
     if ls "${kfold}"/checkpoint_*.pth >/dev/null 2>&1 && [ -z "${ALLOW_EXISTING:-}" ]; then echo "REFUSING: ${kfold} already has checkpoints"; exit 2; fi
@@ -98,7 +112,7 @@ if [ "${MODE}" = submit ]; then
     body="${P}/${name}.job.sh"
     cat > "${body}" <<EOS
 #!/bin/bash
-# flatauglab B3 fold on Killarney (killarney_move.sh): ${name}
+# flatauglab ${PACK} fold on Killarney (killarney_move.sh): ${name}
 set -uo pipefail
 FD='${fd}'
 if [ -f "\${FD}/checkpoint_final.pth" ] && [ ! -e "\${FD}/checkpoint_latest.pth" ]; then echo "[kmove] \${FD}: finished -- nothing to do"; exit 0; fi
@@ -137,9 +151,9 @@ if [ "${MODE}" = status ]; then
 fi
 
 if [ "${MODE}" = syncback ]; then
-  exec 6> "${KM}/syncback.lock"; flock -n 6 || { echo "another syncback holds the lock"; exit 1; }
+  exec 6> "${LOCK}"; flock -n 6 || { echo "another syncback holds the lock"; exit 1; }
   log() { echo "[$(date '+%F %T')] [ksync] $*"; }
-  t_end=$(( $(date +%s) + 9 * 86400 )); log "start pid $$ on $(hostname -s)"
+  t_end=$(( $(date +%s) + 9 * 86400 )); log "start pid $$ on $(hostname -s), pack ${PACK}"
   while :; do
     [ -f "${KM}/STOP_SYNCBACK" ] && { log "STOP file -- exiting"; break; }
     [ "$(date +%s)" -lt "${t_end}" ] || { log "max lifetime -- exiting"; break; }
@@ -156,7 +170,7 @@ if [ "${MODE}" = syncback ]; then
       if [ "$L" = "$R" ]; then echo "$(date '+%F %T') ${vfd}"$'\n'"$L" > "${P}/${name}.SYNCED_TO_VULCAN"; log "${name}: SYNCED ($(echo "$L" | tr '\n' ' '))"; left=$((left - 1))
       else log "${name}: md5 MISMATCH Killarney '$L' vs Vulcan '$R' (retry next cycle)"; fi
     done < "${P}/JOBS.tsv"
-    [ "${left}" -gt 0 ] || { log "all B3 folds synced to Vulcan -- exiting"; break; }
+    [ "${left}" -gt 0 ] || { log "all ${PACK} folds synced to Vulcan -- exiting"; break; }
     for _ in $(seq 60); do [ -f "${KM}/STOP_SYNCBACK" ] && break; sleep 30; done
   done
   exit 0

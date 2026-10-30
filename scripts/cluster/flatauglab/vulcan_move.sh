@@ -14,6 +14,12 @@
 # B3 was then moved on to KILLARNEY before any Vulcan job ran (killarney_move.sh; marker vulcan_move/B3/MOVED_TO_KILLARNEY, Vulcan B3 jobs
 # cancelled); `status` points there for B3.
 # Post-training: moved_poller.sh (writes <companions>/<setting>/SYNCED from the Vulcan checkpoints; companions_vulcan.sh LOCAL_FOLDS mode).
+# 2026-10-30 evening, second move: the REMAINING TamIA packs G1-G3 (BraTS glioma t1n/t2w/t2f/t1c, 12 folds) and B1 (on-harmony T1w x3,
+# open-ms flair x3, pansegdata t1wce folds 0-1) left TamIA the same way (TamIA segments 651740 651743 651746 651749, then 651739 651742
+# 651745 651748 cancelled). G1-G3 train on Vulcan (submit); B1 is recorded + pulled here (durable copy) and trains on KILLARNEY
+# (PACK=B1 killarney_move.sh; marker vulcan_move/B1/MOVED_TO_KILLARNEY -> submit skips it, status points there).
+# ONLY="G1 G2 G3 B1" restricts record/verify/datacheck/pull/submit/status to those packs (default: all); a pack already PULLED is skipped
+# by pull. SEG_TIME (default 23:59:00) = time limit of each of the 2 segments.
 set -euo pipefail
 REPO=/project/aip-jcohen/paulh/mri_synthesis_project; cd "${REPO}"
 export SCRATCH="${SCRATCH:-/scratch/paulh}"
@@ -26,10 +32,17 @@ CFG=transform_params_gpu_default01-23_auglabAug_ImageContrastV26_6_2FlatFillGPUT
 VCFG=transform_params_gpu_VALsynthonly_ImageContrastV26_6_2FlatFillGPUTransform.json; VCFG_MD5=3e4a2b74d2083950044f5eb4f1a37670
 MODE="${1:?usage: record|datacheck|pull|submit|status}"
 T=benchmark/02_tasks
+B=$T/brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma
 O=$T/brain_healthy/on-harmony/5_scripts_on-harmony; M=$T/brain_ms/open-ms/5_scripts_open-ms
 A=$T/liver_hcc/atlas-liver-hcc/5_scripts_atlas-liver-hcc; PS=$T/pancreas_disease/pansegdata/5_scripts_pansegdata
 # setting | scripts dir | train wrapper | expected trainer | epochs | DA | compile | task dir   (rows copied from launch.sh)
 SETTINGS=(
+"brats_t1n|$B|04_66_train_t1n_${METHOD}.sh|nnUNetTrainerBraTS2024GliomaAugLabDefault|2500|0|0|brain_tumor/brats2024-glioma"
+"brats_t2w|$B|04_67_train_t2w_${METHOD}.sh|nnUNetTrainerBraTS2024GliomaT2wAugLabDualVal|2500|0|0|brain_tumor/brats2024-glioma"
+"brats_t2f|$B|04_68_train_t2f_${METHOD}.sh|nnUNetTrainerBraTS2024GliomaT2fAugLabDualVal|2500|0|0|brain_tumor/brats2024-glioma"
+"brats_t1c|$B|04_76_train_t1c_${METHOD}.sh|nnUNetTrainerBraTS2024GliomaT1cAugLabDualVal|2500|0|0|brain_tumor/brats2024-glioma"
+"onh_T1w|$O|04_88_train_t1w_${METHOD}.sh|nnUNetTrainerOnHarmonyAugLabDualVal|2000|0|0|brain_healthy/on-harmony"
+"openms_flair|$M|04_69_train_flair_${METHOD}.sh|nnUNetTrainerOpenMSAugLabDefault|2000|8|1|brain_ms/open-ms"
 "onh_T2w|$O|04_89_train_t2w_${METHOD}.sh|nnUNetTrainerOnHarmonyAugLabDefault|2000|0|0|brain_healthy/on-harmony"
 "openms_t1w|$M|04_70_train_t1w_${METHOD}.sh|nnUNetTrainerOpenMSAugLabDefault|2000|8|1|brain_ms/open-ms"
 "atlas_t1w|$A|04_22_train_t1w_${METHOD}.sh|nnUNetTrainerAtlasLiverHCCAugLabDualVal|2000|8|1|liver_hcc/atlas-liver-hcc"
@@ -40,8 +53,14 @@ SETTINGS=(
 MOVED=(
 "B2|onh_T2w:0 onh_T2w:1 onh_T2w:2 openms_t1w:0 openms_t1w:1 openms_t1w:2 panseg_t1wce:2 panseg_t2w:0"
 "B3|atlas_t1w:0 atlas_t1w:1 atlas_t1w:2 panseg_t2w:1 panseg_t2w:2"
+"G1|brats_t1n:0 brats_t1n:1 brats_t1n:2 brats_t2w:0"
+"G2|brats_t2w:1 brats_t2w:2 brats_t2f:0 brats_t2f:1"
+"G3|brats_t2f:2 brats_t1c:0 brats_t1c:1 brats_t1c:2"
+"B1|onh_T1w:0 onh_T1w:1 onh_T1w:2 openms_flair:0 openms_flair:1 openms_flair:2 panseg_t1wce:0 panseg_t1wce:1"
 )
-TAMIA_JOBS="651751 651752 651754 651755"
+TAMIA_JOBS="651751 651752 651754 651755 | 651739 651740 651742 651743 651745 651746 651748 651749"
+ONLY="${ONLY:-}"; SEG_TIME="${SEG_TIME:-23:59:00}"
+want() { [ -z "${ONLY}" ] && return 0; case " ${ONLY} " in *" $1 "*) return 0;; esac; return 1; }
 srow() { local s; for s in "${SETTINGS[@]}"; do [ "${s%%|*}" = "$1" ] && { echo "$s"; return 0; }; done; return 1; }
 clean_cmd() { sed -e 's/\\n/\n/g' -e "s/\\\\'//g" "$1"; }
 getv() { printf '%s\n' "$1" | sed -n "s/^ *export $2=//p" | head -1 | tr -d "'"; }
@@ -49,7 +68,7 @@ getv() { printf '%s\n' "$1" | sed -n "s/^ *export $2=//p" | head -1 | tr -d "'";
 tamia_index() { "${SSH[@]}" "cat ${TROOT}/$1/index.tsv"; }
 
 if [ "${MODE}" = record ]; then
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; spec="${pk#*|}"; PD="${MV}/${p}"
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; spec="${pk#*|}"; PD="${MV}/${p}"; want "${p}" || continue
     [ -f "${PD}/index.tsv" ] && { echo "[record] ${p} already recorded (${PD}) -- skipped"; continue; }
     for sf in ${spec}; do s="${sf%%:*}"; k="${sf#*:}"
       IFS='|' read -r _ dir tw etr ep eda ecmp task <<<"$(srow "$s")"
@@ -68,7 +87,7 @@ fi
 
 if [ "${MODE}" = verify ]; then
   bad=0
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; read -ra SP <<<"${pk#*|}"; PD="${MV}/${p}"
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; read -ra SP <<<"${pk#*|}"; PD="${MV}/${p}"; want "${p}" || continue
     n=$(grep -c . "${PD}/index.tsv"); echo "-- ${p}: ${n} folds (expect ${#SP[@]})"; [ "$n" = "${#SP[@]}" ] || { echo "   FOLD COUNT MISMATCH"; bad=1; }
     i=0
     while IFS=$'\t' read -r cmd log name done_; do
@@ -100,7 +119,7 @@ fi
 
 if [ "${MODE}" = datacheck ]; then
   bad=0; declare -A seen=()
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; want "${p}" || continue
     TIDX="$(tamia_index "${p}")" || { echo "connection problem"; exit 4; }
     while IFS=$'\t' read -r cmd log name done_; do
       tcmd="$(echo "${TIDX}" | awk -F'\t' -v n="${name}" '$3==n {print $1}')"
@@ -128,7 +147,7 @@ if [ "${MODE}" = datacheck ]; then
   LV="$(.venv/bin/pip freeze 2>/dev/null | grep -iE "^(${PKGS})==" | sort)"
   RV="$("${SSH[@]}" "cd ${REPO} && .venv/bin/pip freeze 2>/dev/null" | grep -iE "^(${PKGS})==" | sort)"
   [ "$LV" = "$RV" ] && { echo "   pip versions identical:"; echo "$LV" | tr '\n' ' '; echo; } || { echo "   PIP DIFF (TamIA < > Vulcan):"; diff <(echo "$RV") <(echo "$LV") || true; [ "$(diff <(echo "$RV" | grep -vi simpleitk) <(echo "$LV" | grep -vi simpleitk))" = "" ] && echo "   (SimpleITK only: NIfTI I/O, not used by training on preprocessed data -- accepted)" || bad=1; }
-  FILES="nnunetv2/training/logging/nnunet_logger.py nnunetv2/training/nnUNetTrainer/OnHarmonyTrainers.py nnunetv2/training/nnUNetTrainer/OpenMSTrainers.py nnunetv2/training/nnUNetTrainer/AtlasLiverHCCTrainers.py nnunetv2/training/nnUNetTrainer/PANSEGDATATrainers.py"
+  FILES="nnunetv2/training/logging/nnunet_logger.py nnunetv2/training/nnUNetTrainer/OnHarmonyTrainers.py nnunetv2/training/nnUNetTrainer/OpenMSTrainers.py nnunetv2/training/nnUNetTrainer/AtlasLiverHCCTrainers.py nnunetv2/training/nnUNetTrainer/PANSEGDATATrainers.py nnunetv2/training/nnUNetTrainer/BraTS2024GliomaTrainers.py"
   LM="$(cd .venv/lib/python3.*/site-packages && md5sum ${FILES})"; RM="$("${SSH[@]}" "cd ${REPO}/.venv/lib/python3.*/site-packages && md5sum ${FILES}")"
   if [ "$LM" = "$RM" ]; then echo "   logger patch + 4 trainer shims identical"
   else  # shims differ: accept only path / comment lines (the shims' own _scripts path is absent on both clusters; classes import via the cmd PYTHONPATH)
@@ -154,8 +173,9 @@ fi
 
 if [ "${MODE}" = pull ]; then
   q="$("${SSH[@]}" "squeue -u paulh -h -o '%i %j %T'")" || { echo "connection problem"; exit 4; }
-  if echo "$q" | grep -qE 'flatauglab_B[23]( |$)'; then echo "REFUSING: TamIA still has B2/B3 jobs queued:"; echo "$q" | grep -E 'flatauglab_B[23]'; exit 1; fi
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; PL="${PD}/PULL.log"
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; PL="${PD}/PULL.log"; want "${p}" || continue
+    grep -q '^PULLED' "${PL}" 2>/dev/null && { echo "[pull] ${p} already pulled -- skipped"; continue; }
+    if echo "$q" | grep -qE "flatauglab_${p}( |\$)"; then echo "REFUSING: TamIA still has ${p} jobs queued:"; echo "$q" | grep -E "flatauglab_${p}( |\$)"; exit 1; fi
     TIDX="$(tamia_index "${p}")"
     while IFS=$'\t' read -r cmd log name done_; do
       res=$(getv "$(clean_cmd "$cmd")" nnUNet_results)
@@ -180,7 +200,8 @@ if [ "${MODE}" = pull ]; then
 fi
 
 if [ "${MODE}" = submit ]; then
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; want "${p}" || continue
+    [ -f "${PD}/MOVED_TO_KILLARNEY" ] && { echo "[submit] ${p} trains on Killarney ($(head -1 "${PD}/MOVED_TO_KILLARNEY")) -- skipped"; continue; }
     grep -q '^PULLED' "${PD}/PULL.log" 2>/dev/null || { echo "REFUSING: ${p} not pulled"; exit 1; }
     [ -f "${PD}/JOBS.tsv" ] && { echo "[submit] ${p} already submitted ($(wc -l < "${PD}/JOBS.tsv") folds) -- skipped"; continue; }
     while IFS=$'\t' read -r cmd log name done_; do
@@ -198,7 +219,7 @@ if [ -f "\${FD}/checkpoint_final.pth" ] && [ ! -e "\${FD}/checkpoint_latest.pth"
 echo "[moved] host=\$(hostname) job=\${SLURM_JOB_ID} gpu=\${CUDA_VISIBLE_DEVICES:-?} resume ${name}"
 bash '${cmd}' >> '${PD}/${name}.train.log' 2>&1
 EOS
-      common=(--account=aip-jcohen --gres=gpu:l40s:1 --cpus-per-task=16 --mem=110G --time=23:59:00 --exclude=rack02-06 --job-name="flataugmv_${name%%_auglabAugFlat*}")
+      common=(--account=aip-jcohen --gres=gpu:l40s:1 --cpus-per-task=16 --mem=110G --time="${SEG_TIME}" --exclude=rack02-06 --job-name="flataugmv_${name%%_auglabAugFlat*}")
       j1="$(sbatch --parsable "${common[@]}" --output="${PD}/${name}.seg1_%j.out" "${body}")"; sleep 2
       j2="$(sbatch --parsable "${common[@]}" --dependency=afterany:"${j1}" --output="${PD}/${name}.seg2_%j.out" "${body}")"; sleep 2
       printf '%s\t%s\t%s\t%s\n' "${name}" "${j1}" "${j2}" "${fd}" | tee -a "${PD}/JOBS.tsv"
@@ -208,8 +229,8 @@ EOS
 fi
 
 if [ "${MODE}" = status ]; then
-  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; echo "-- ${p}"
-    [ -f "${PD}/MOVED_TO_KILLARNEY" ] && { echo "   on Killarney: $(cat "${PD}/MOVED_TO_KILLARNEY") -- bash /scratch/paulh/flatauglab_kmove/killarney_move.sh status (Killarney)"; continue; }
+  for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; want "${p}" || continue; echo "-- ${p}"
+    [ -f "${PD}/MOVED_TO_KILLARNEY" ] && { echo "   on Killarney: $(cat "${PD}/MOVED_TO_KILLARNEY") -- PACK=${p} bash /scratch/paulh/flatauglab_kmove/killarney_move.sh status (Killarney)"; continue; }
     [ -f "${PD}/JOBS.tsv" ] || { echo "   not submitted"; continue; }
     while IFS=$'\t' read -r name j1 j2 fd; do
       L="$(ls -t "${fd}"/training_log_*.txt 2>/dev/null | head -1)"

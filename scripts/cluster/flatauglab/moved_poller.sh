@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Third Vulcan login-node poller of the flatauglab arm (2026-10-30), for the settings whose folds were MOVED from TamIA to Vulcan by
-# vulcan_move.sh (packs B2 + B3): onh_T2w, openms_t1w, atlas_t1w, panseg_t2w (all 3 folds on Vulcan) and panseg_t1wce (fold 2 on Vulcan,
+# vulcan_move.sh (packs B2 + B3, then G1-G3 + B1): onh_T2w, openms_t1w, atlas_t1w, panseg_t2w (all 3 folds on Vulcan) and panseg_t1wce (fold 2 on Vulcan,
 # folds 0-1 still in TamIA pack B1). companions_poller.sh never fires for these (it waits for 3/3 folds done ON TAMIA), so every POLL_S
 # (default 1800 s) this runs companions_vulcan.sh <setting> in its LOCAL_FOLDS mode (<companions dir>/<setting>/LOCAL_FOLDS, written here):
 # Vulcan-trained folds are checked + md5'd in place, the TamIA folds (panseg_t1wce 0-1) are rsynced as usual; it writes SYNCED (-> the
 # running vulcan_post_poller.sh submits the own-test + HCC controller) and, for panseg_*, submits the totalsegmri / msd-pancreas companions.
 # Same retry rules as companions_poller.sh (rc 3 = training not complete, 4 / 124 = connection: no attempt used). One instance (flock).
 # Exits when every moved setting is DONE / FAILED, on STOP_MOVED, or after MAX_DAYS (default 9).
+# 2026-10-30 evening (second move, packs G1-G3 -> Vulcan, B1 -> Killarney): + brats_t1n/t2w/t2f/t1c (Vulcan), onh_T1w, openms_flair
+# (Killarney, synced back into the Vulcan run dir by `PACK=B1 killarney_move.sh syncback`), and panseg_t1wce is now 0 1 2 (fold 2 Vulcan,
+# folds 0-1 Killarney -> synced back): nothing of this arm is left on TamIA. The MOVED array is read once at start: restart the poller
+# (STOP_MOVED, wait for "exit", rm STOP_MOVED, start) after changing it; settings already DONE are skipped.
 #   start : systemd-run --user --scope --unit=flatauglab-moved -- nohup bash scripts/cluster/flatauglab/moved_poller.sh \
 #             >> /scratch/paulh/flatauglab_20261028/companions/moved_poller.log 2>&1 &
 #   stop  : touch /scratch/paulh/flatauglab_20261028/companions/STOP_MOVED
@@ -23,7 +27,13 @@ MOVED=(
 "openms_t1w|0 1 2|${T}/brain_ms/open-ms/8_results_open-ms/01_predictions/open_ms_model/t1w/auglab/open-ms_t1w_${METHOD}_${TS}"
 "atlas_t1w|0 1 2|${T}/liver_hcc/atlas-liver-hcc/8_results_atlas-liver-hcc/01_predictions/atlas_liver_hcc_model/t1w/auglab/atlas-liver-hcc_t1w_${METHOD}_${TS}"
 "panseg_t2w|0 1 2|${T}/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t2w/auglab/pansegdata_t2w_${METHOD}_${TS}"
-"panseg_t1wce|2|${T}/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t1wce/auglab/pansegdata_t1wce_${METHOD}_${TS}"
+"panseg_t1wce|0 1 2|${T}/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t1wce/auglab/pansegdata_t1wce_${METHOD}_${TS}"
+"brats_t1n|0 1 2|${T}/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t1n/auglab/brats2024-glioma_t1n_${METHOD}_${TS}"
+"brats_t2w|0 1 2|${T}/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t2w/auglab/brats2024-glioma_t2w_${METHOD}_${TS}"
+"brats_t2f|0 1 2|${T}/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t2f/auglab/brats2024-glioma_t2f_${METHOD}_${TS}"
+"brats_t1c|0 1 2|${T}/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t1c/auglab/brats2024-glioma_t1c_${METHOD}_${TS}"
+"onh_T1w|0 1 2|${T}/brain_healthy/on-harmony/8_results_on-harmony/01_predictions/on_harmony_model/T1w/auglab/on-harmony_T1w_${METHOD}_${TS}"
+"openms_flair|0 1 2|${T}/brain_ms/open-ms/8_results_open-ms/01_predictions/open_ms_model/flair/auglab/open-ms_flair_${METHOD}_${TS}"
 )
 exec 7> "${CD}/moved_poller.lock"; flock -n 7 || { echo "[moved-poller] another instance holds the lock -- exiting"; exit 1; }
 echo "$$" > "${CD}/moved_poller.pid"
