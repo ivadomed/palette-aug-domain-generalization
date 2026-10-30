@@ -15,6 +15,9 @@
 #                <companions dir>/dryrun/ (predict_common needs the run dir to exist) and grep-verifies them. Works before training ends.
 # Idempotent: <companions dir>/<setting>/DONE stops any rerun; SUBMITTED (written before the first sbatch) stops a second submission.
 # Exit 4 = connection problem (ssh / rsync transport): the poller retries next cycle without using one of the setting's attempts.
+# LOCAL_FOLDS mode (2026-10-30, vulcan_move.sh): <companions dir>/<setting>/LOCAL_FOLDS (line 1 = folds trained ON VULCAN, line 2 = the Vulcan
+# run dir) -> those folds' state + md5 come from the Vulcan run dir, TamIA is asked only for the other folds (none if all 3 are local), and
+# the rsync excludes the local fold dirs (TamIA keeps a stale copy of them). Driven by moved_poller.sh.
 # Companions running on TamIA (hanseg / pddca, amos / sliver07 fov_crop, lld-mmri-hcc / liverhccseg): launch.sh queue-companions.
 set -euo pipefail
 REPO=/project/aip-jcohen/paulh/mri_synthesis_project; cd "${REPO}"
@@ -51,40 +54,69 @@ RID="$(awk -F'\t' -v s="${SETTING}" '$1==s {print $3}' "${RUNS}" | sort -u)"
 [[ "${RID}" == *_${METHOD}_${TS} ]] || { log "ERROR: run id ${RID} is not the flatauglab arm"; exit 2; }
 K="${SETTING%%_*}"; TC="${SETTING#*_}"; DS="$(basename "${TASK[$K]}")"
 [[ "${RID}" == "${DS}_${TC}_${METHOD}_${TS}" ]] || { log "ERROR: run id ${RID} does not match ${DS}/${TC}"; exit 2; }
-ST="$("${SSH[@]}" 'bash -s' < scripts/cluster/flatauglab/tamia_ckpt_status.sh | awk -F'\t' -v r="${RID}" '$1=="ST" && $2==r')" \
-  || { log "ERROR: TamIA status call failed (relay down? re-auth: ssh -fN ${TAMIA})"; exit 4; }
-ndone="$(echo "${ST}" | awk -F'\t' '$4=="done" {print $3}' | sort -u | grep -c . || true)"
-log "run ${RID}: folds done ${ndone}/3 ($(echo "${ST}" | awk -F'\t' '{printf "f%s=%s ", $3, $4}'))"
+LF=""; LRD=""
+if [ -f "${SD}/LOCAL_FOLDS" ]; then LF="$(sed -n 1p "${SD}/LOCAL_FOLDS")"; LRD="$(sed -n 2p "${SD}/LOCAL_FOLDS")"
+  [ "$(basename "${LRD}")" = "${RID}" ] && [ -d "${LRD}" ] || { log "ERROR: LOCAL_FOLDS run dir '${LRD}' is not ${RID}"; exit 2; }; fi
+islocal() { case " ${LF} " in *" $1 "*) return 0;; esac; return 1; }
+REMOTE_FOLDS=""; for k in 0 1 2; do islocal "$k" || REMOTE_FOLDS="${REMOTE_FOLDS} ${k}"; done
+ST=""
+if [ -n "${REMOTE_FOLDS}" ]; then
+  ST="$("${SSH[@]}" 'bash -s' < scripts/cluster/flatauglab/tamia_ckpt_status.sh | awk -F'\t' -v r="${RID}" -v lf=" ${LF} " '$1=="ST" && $2==r && index(lf, " " $3 " ")==0')" \
+    || { log "ERROR: TamIA status call failed (relay down? re-auth: ssh -fN ${TAMIA})"; exit 4; }
+fi
+LST=""; now=$(date +%s)
+for k in ${LF}; do
+  d="$(ls -d "${LRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${k} 2>/dev/null | head -1)"; st=training
+  if [ -n "$d" ] && [ -f "$d/checkpoint_final.pth" ]; then st=settling
+    [ -f "$d/checkpoint_best.pth" ] && [ ! -e "$d/checkpoint_latest.pth" ] && [ $(( now - $(stat -c %Y "$d/checkpoint_final.pth") )) -gt 600 ] && st=done; fi
+  LST="${LST}$(printf 'ST\t%s\t%s\t%s\t%s\t%s' "${RID}" "${k}" "${st}" "${LRD}" "${d#${LRD}/}")"$'\n'
+done
+ALLST="$(printf '%s\n%s' "${ST}" "${LST}" | grep . || true)"
+ndone="$(echo "${ALLST}" | awk -F'\t' '$4=="done" {print $3}' | sort -u | grep -c . || true)"
+log "run ${RID}: folds done ${ndone}/3 ($(echo "${ALLST}" | awk -F'\t' '{printf "f%s=%s ", $3, $4}'))${LF:+ (Vulcan-trained folds: ${LF})}"
 if [ "${ndone}" != 3 ]; then [ "${DRY}" = 1 ] || { log "training not complete -- nothing done"; exit 3; }; log "(dry-run: continuing anyway)"; fi
-SRC="$(echo "${ST}" | awk -F'\t' '{print $5}' | sort -u)"
-[ "$(echo "${SRC}" | grep -c .)" = 1 ] || { log "ERROR: run dir not unique on TamIA: ${SRC}"; exit 2; }
-[[ "${SRC}" == */01_predictions/*/auglab/${RID} ]] || { log "ERROR: unexpected TamIA run dir ${SRC}"; exit 2; }
-DEST="${REPO}/${T}/${TASK[$K]}/8_results_${DS}/01_predictions/${SRC#*/01_predictions/}"
+if [ -n "${REMOTE_FOLDS}" ]; then
+  SRC="$(echo "${ST}" | awk -F'\t' '{print $5}' | sort -u)"
+  [ "$(echo "${SRC}" | grep -c .)" = 1 ] || { log "ERROR: run dir not unique on TamIA: ${SRC}"; exit 2; }
+  [[ "${SRC}" == */01_predictions/*/auglab/${RID} ]] || { log "ERROR: unexpected TamIA run dir ${SRC}"; exit 2; }
+  DEST="${REPO}/${T}/${TASK[$K]}/8_results_${DS}/01_predictions/${SRC#*/01_predictions/}"
+else SRC="${LRD}"; DEST="${LRD}"; fi
+[ -z "${LRD}" ] || [ "$(realpath -m "${LRD}")" = "$(realpath -m "${DEST}")" ] || { log "ERROR: Vulcan run dir ${LRD} != ${DEST}"; exit 2; }
 PARENT="$(dirname "${DEST}")"
 # proof of the right tree: Vulcan already has <results>/01_predictions/<model>/<contrast>/ for this setting (toothfairy2 keeps only a few
 # runs on Vulcan, so an existing headline run is not required)
 [ -d "$(dirname "${PARENT}")" ] || { log "ERROR: $(dirname "${PARENT}") does not exist -- not the setting's results tree?"; exit 2; }
-FOLDREL="$(echo "${ST}" | awk -F'\t' '{print $6}' | sort)"   # Dataset*/<trainer>__nnUNetPlans__3d_fullres/fold_k
+FOLDREL="$(echo "${ALLST}" | awk -F'\t' '{print $6}' | sort)"   # Dataset*/<trainer>__nnUNetPlans__3d_fullres/fold_k
 TRAINER_DIR="$(echo "${FOLDREL}" | head -1 | cut -d/ -f2)"; DSDIR="$(echo "${FOLDREL}" | head -1 | cut -d/ -f1)"
 log "TamIA ${SRC}"; log "Vulcan ${DEST}"
 
 # ---- (b) rsync + verify
-RS=(rsync -a --partial -e "ssh -o BatchMode=yes -o ConnectTimeout=30" --exclude=checkpoint_latest.pth --exclude=wandb/
+LEXC=(); for k in ${LF}; do LEXC+=("--exclude=/Dataset*/*/fold_${k}/"); done
+RS=(rsync -a --partial -e "ssh -o BatchMode=yes -o ConnectTimeout=30" "${LEXC[@]}" --exclude=checkpoint_latest.pth --exclude=wandb/
     --exclude='validation/*.nii.gz' --exclude='validation/*.npz' --include='/Dataset*/***' --exclude='*' "${TAMIA}:${SRC}/" "${DEST}/")
 if [ "${DRY}" = 1 ]; then
   log "[dry] mkdir -p ${DEST} && ${RS[*]}"
 elif [ -f "${SD}/SYNCED" ]; then log "already synced ($(head -1 "${SD}/SYNCED"))"
 else
-  mkdir -p "${DEST}"; log "rsync ..."
-  rrc=0; "${RS[@]}" || rrc=$?
-  case "${rrc}" in 0) ;; 10|12|30|35|255) log "rsync connection problem rc=${rrc} (retry next cycle)"; exit 4 ;; *) log "ERROR: rsync failed rc=${rrc}"; exit 5 ;; esac
-  MD="$("${SSH[@]}" 'bash -s' -- md5 "${RID}" < scripts/cluster/flatauglab/tamia_ckpt_status.sh)" || { log "connection problem (md5 call; retry next cycle)"; exit 4; }
-  [ "$(echo "${MD}" | grep -c '^MD5')" = 6 ] || { log "ERROR: expected 6 checkpoint md5s from TamIA, got: ${MD}"; exit 5; }
+  MD=""
+  if [ -n "${REMOTE_FOLDS}" ]; then
+    mkdir -p "${DEST}"; log "rsync ...${LF:+ (excluding Vulcan-trained folds ${LF})}"
+    rrc=0; "${RS[@]}" || rrc=$?
+    case "${rrc}" in 0) ;; 10|12|30|35|255) log "rsync connection problem rc=${rrc} (retry next cycle)"; exit 4 ;; *) log "ERROR: rsync failed rc=${rrc}"; exit 5 ;; esac
+    MD="$("${SSH[@]}" 'bash -s' -- md5 "${RID}" < scripts/cluster/flatauglab/tamia_ckpt_status.sh)" || { log "connection problem (md5 call; retry next cycle)"; exit 4; }
+    for k in ${LF}; do MD="$(echo "${MD}" | grep -v "/fold_${k}/" || true)"; done   # TamIA's stale copy of a Vulcan-trained fold
+  fi
+  nrem=$(( $(echo ${REMOTE_FOLDS} | wc -w) * 2 ))
+  [ "$(echo "${MD}" | grep -c '^MD5' || true)" = "${nrem}" ] || { log "ERROR: expected ${nrem} checkpoint md5s from TamIA, got: ${MD}"; exit 5; }
   bad=0
   while IFS=$'\t' read -r _ m sz p; do
     lp="${DEST}/${p#${SRC}/}"; lsz="$(stat -c %s "${lp}" 2>/dev/null || echo 0)"; lm="$(md5sum < "${lp}" | cut -c1-32)"
     [ "${lsz}" = "${sz}" ] && [ "${lm}" = "${m}" ] && log "  ok  ${p#${SRC}/} ${sz} ${m}" || { log "  BAD ${p#${SRC}/} local ${lsz}/${lm} vs ${sz}/${m}"; bad=1; }
-  done <<< "${MD}"
+  done < <(echo "${MD}" | grep '^MD5' || true)
+  LMD=""; for k in ${LF}; do for ck in checkpoint_final checkpoint_best; do f="$(ls "${LRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${k}/${ck}.pth)"
+    LMD="${LMD}$(printf 'MD5\t%s\t%s\t%s' "$(md5sum < "$f" | cut -c1-32)" "$(stat -c %s "$f")" "$f")"$'\n'; log "  local ${f#${LRD}/}"; done; done
+  MD="$(printf '%s\n%s' "${MD}" "${LMD}" | grep '^MD5' || true)"
+  [ "$(echo "${MD}" | grep -c '^MD5')" = 6 ] || { log "ERROR: expected 6 checkpoint md5s in total, got: ${MD}"; exit 5; }
   [ "${bad}" = 0 ] || { log "ERROR: checkpoint verification failed"; status sync_failed "${DEST}"; exit 5; }
   echo "${DEST} $(date '+%F %T')" > "${SD}/SYNCED"; echo "${MD}" >> "${SD}/SYNCED"; status synced "${DEST}"
 fi
