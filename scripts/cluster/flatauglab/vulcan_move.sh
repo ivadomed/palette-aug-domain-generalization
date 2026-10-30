@@ -11,6 +11,8 @@
 #   bash scripts/cluster/flatauglab/vulcan_move.sh submit      # 2 chained sbatch segments per fold
 #   bash scripts/cluster/flatauglab/vulcan_move.sh status      # epoch reached per fold (Vulcan) + done
 # Records: /scratch/paulh/flatauglab_20261028/vulcan_move/<pack>/ (index.tsv, fold cmds, PULL.log, JOBS.tsv).
+# B3 was then moved on to KILLARNEY before any Vulcan job ran (killarney_move.sh; marker vulcan_move/B3/MOVED_TO_KILLARNEY, Vulcan B3 jobs
+# cancelled); `status` points there for B3.
 # Post-training: moved_poller.sh (writes <companions>/<setting>/SYNCED from the Vulcan checkpoints; companions_vulcan.sh LOCAL_FOLDS mode).
 set -euo pipefail
 REPO=/project/aip-jcohen/paulh/mri_synthesis_project; cd "${REPO}"
@@ -207,6 +209,7 @@ fi
 
 if [ "${MODE}" = status ]; then
   for pk in "${MOVED[@]}"; do p="${pk%%|*}"; PD="${MV}/${p}"; echo "-- ${p}"
+    [ -f "${PD}/MOVED_TO_KILLARNEY" ] && { echo "   on Killarney: $(cat "${PD}/MOVED_TO_KILLARNEY") -- bash /scratch/paulh/flatauglab_kmove/killarney_move.sh status (Killarney)"; continue; }
     [ -f "${PD}/JOBS.tsv" ] || { echo "   not submitted"; continue; }
     while IFS=$'\t' read -r name j1 j2 fd; do
       L="$(ls -t "${fd}"/training_log_*.txt 2>/dev/null | head -1)"
