@@ -49,7 +49,8 @@ if [ "${MODE}" = prep ]; then
       pre=$(getv "$c" nnUNet_preprocessed); res=$(getv "$c" nnUNet_results); pp=$(getv "$c" PYTHONPATH); cfgp=$(getv "$c" AUGLAB_PARAMS_GPU_JSON)
       ok=OK; [ -z "${rest}" ] || ok="${ok},CMD_DIFF"; [ -d "${pre}" ] || ok="${ok},NO_PREPROC(${pre})"; [[ "${pp}" == "${GINIPA_PIN}:"* ]] || ok="${ok},PIN_NOT_FIRST"
       [ "${cfgp}" = "${GINIPA_PIN}/auglab/configs/${GINIPA_CONFIG}" ] && [ "$(md5sum < "${cfgp}" | cut -c1-32)" = "${GINIPA_CONFIG_MD5}" ] || ok="${ok},CFG"
-      [[ "${res}" == "${KREPO}/benchmark/02_tasks/"*"/auglab/${name#fold?_}" ]] || ok="${ok},RESULTS(${res})"
+      if [ -n "${PROBE:-}" ]; then [[ "${res}" == */_ginipa_probe/*"/auglab/${name#fold?_}" ]] || ok="${ok},PROBE_NOT_THROWAWAY(${res})"
+      else [[ "${res}" == "${KREPO}/benchmark/02_tasks/"*"/auglab/${name#fold?_}" ]] || ok="${ok},RESULTS(${res})"; fi
       [ ! -e "${res}" ] || [ -n "${ALLOW_EXISTING:-}" ] || ok="${ok},RESULTS_DIR_EXISTS"
       grep -q '/project/aip-jcohen' "${k}" && ok="${ok},VULCAN_PATH_LEFT"
       echo "   ${ok} ${u} ${name}"; [ -z "${rest}" ] || echo "${rest}" | sed 's/^/      /'; [ "${ok}" = OK ] || bad=1
