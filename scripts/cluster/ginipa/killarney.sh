@@ -3,7 +3,7 @@
 # login node; Vulcan is reached through klogin02's ssh master. The fold commands are RECORDED ON VULCAN (`ginipa.sh record killarney`,
 # Vulcan paths, Vulcan pin inserted, VERIFY PASSED) and rewritten here (repo prefix + pin path only), so Killarney's older checkout never
 # records anything. Order:
-#   bash scripts/cluster/ginipa/killarney.sh prep              # fetch <root>/killarney from Vulcan, rewrite, verify (diff vs Vulcan cmd,
+#   bash scripts/cluster/ginipa/killarney.sh prep [UNIT...]    # fetch <root>/killarney from Vulcan, rewrite, verify (diff vs Vulcan cmd,
 #                                                              #   pin = PIN.conf + disk, config md5, preprocessed md5 vs Vulcan)
 #   bash scripts/cluster/ginipa/killarney.sh submit [--dry-run] [UNIT...]   # chained guarded segments per fold (same body as ginipa.sh)
 #   bash scripts/cluster/ginipa/killarney.sh status
@@ -30,13 +30,21 @@ getv() { printf '%s\n' "$1" | sed -n "s/^ *export $2=//p" | head -1 | tr -d "'";
 if [ "${MODE}" = prep ]; then
   R="$(vrun "cat ${STATE}")"   # the arm root has the same path on both clusters (/scratch/paulh)
   echo "${R}" > "${STATE}"; mkdir -p "${R}"
-  vrun "cd ${R} && tar cf - run_table.tsv TS PIN.conf LAUNCH_INFO killarney" | tar xf - -C "${R}"
+  # prep [UNIT...]: once any Killarney unit is submitted, only the named units are fetched / rewritten (a running unit's command,
+  # index.tsv and body are never rewritten under it)
+  SELU="$*"
+  if [ -z "${SELU}" ]; then
+    ls "${R}"/killarney/*/JOBS.tsv >/dev/null 2>&1 && { echo "REFUSING: Killarney units already submitted -- name the units to prep"; exit 1; }
+    SELU="$(vrun "ls ${R}/killarney" | tr '\n' ' ')"
+  fi
+  for u in ${SELU}; do [ ! -f "${R}/killarney/${u}/JOBS.tsv" ] || { echo "REFUSING: ${u} already submitted"; exit 1; }; done
+  vrun "cd ${R} && tar cf - run_table.tsv TS PIN.conf LAUNCH_INFO $(for u in ${SELU}; do printf 'killarney/%s ' "${u}"; done)" | tar xf - -C "${R}"
   # the run table's pin must be this cluster's verified pin
   awk -F'\t' 'NR>1 {print $13" "$15}' "${R}/run_table.tsv" | sort -u | while read -r cm md5; do
     [ "${cm}" = "${GINIPA_COMMIT}" ] && [ "${md5}" = "${GINIPA_CONFIG_MD5}" ] || { echo "REFUSING: run table pins ${cm:0:12}/${md5}, Killarney pin ${GINIPA_COMMIT:0:12}/${GINIPA_CONFIG_MD5}"; exit 1; }
   done
   bad=0
-  for UD in "${R}"/killarney/*/; do UD="${UD%/}"; u="$(basename "${UD}")"
+  for u in ${SELU}; do UD="${R}/killarney/${u}"
     [ -f "${UD}/VERIFY_PASSED" ] || { echo "REFUSING: ${u} not VERIFY_PASSED on Vulcan"; exit 1; }
     mkdir -p "${UD}/vulcan_cmds"; : > "${UD}/index.k.tsv"
     while IFS=$'\t' read -r vcmd vlog name vdone; do
@@ -58,14 +66,15 @@ if [ "${MODE}" = prep ]; then
     mv "${UD}/index.tsv" "${UD}/index.vulcan.tsv"; mv "${UD}/index.k.tsv" "${UD}/index.tsv"
   done
   # preprocessed parity with Vulcan, per dataset id of the commands
-  for did in $(cat "${R}"/killarney/*/fold*.sh 2>/dev/null | grep -oE 'nnUNetv2_train [0-9]+' | awk '{print $2}' | sort -u); do
-    f="$(grep -l "nnUNetv2_train ${did} " "${R}"/killarney/*/fold*.sh | head -1)"; kp=$(getv "$(clean_cmd "$f")" nnUNet_preprocessed); vp="${kp//${KREPO}/${VREPO}}"
+  SELF="$(for u in ${SELU}; do ls "${R}/killarney/${u}"/fold*.sh; done)"
+  for did in $(cat ${SELF} 2>/dev/null | grep -oE 'nnUNetv2_train [0-9]+' | awk '{print $2}' | sort -u); do
+    f="$(grep -l "nnUNetv2_train ${did} " ${SELF} | head -1)"; kp=$(getv "$(clean_cmd "$f")" nnUNet_preprocessed); vp="${kp//${KREPO}/${VREPO}}"
     dsd="$(cd "$kp" && ls -d Dataset${did}_* | head -1)"
     q='for x in nnUNetPlans.json dataset.json splits_final.json dataset_fingerprint.json; do echo "$(md5sum < $x | cut -c1-32) $x"; done; echo "nfiles $(ls nnUNetPlans_3d_fullres | wc -l)"'
     L="$(cd "$kp/$dsd" && bash -c "$q")"; Rm="$(vrun "cd $vp/$dsd && bash -c '$(printf '%s' "$q" | sed "s/'/'\\\\''/g")'")"
     if [ "$L" = "$Rm" ]; then echo "   preprocessed ${dsd}: identical to Vulcan ($(echo "$L" | tail -1))"; else echo "   PREPROCESSED DIFF ${dsd}"; diff <(echo "$Rm") <(echo "$L") || true; bad=1; fi
   done
-  [ "${bad}" = 0 ] && { for UD in "${R}"/killarney/*/; do date '+%F %T' > "${UD%/}/KPREP_PASSED"; done; echo "PREP PASSED"; } || { echo "PREP FAILED"; exit 1; }
+  [ "${bad}" = 0 ] && { for u in ${SELU}; do date '+%F %T' > "${R}/killarney/${u}/KPREP_PASSED"; done; echo "PREP PASSED (${SELU})"; } || { echo "PREP FAILED"; exit 1; }
   exit 0
 fi
 

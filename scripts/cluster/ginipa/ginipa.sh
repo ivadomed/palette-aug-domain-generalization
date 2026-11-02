@@ -31,7 +31,7 @@ case "${GINIPA_CLUSTER}" in tamia) RB=/scratch/p/paulh ;; *) RB=/scratch/paulh ;
 export SCRATCH="${RB}"
 STATE="${GINIPA_ROOT_FILE:-${RB}/_ginipa_root${PROBE:+_probe}.txt}"
 PLAN="${GINIPA_PLAN:-${GDIR}/plan${PROBE:+_probe}.conf}"
-MODE="${1:?usage: runtable|mirror|record|submit|move|status|shims|body}"; shift
+MODE="${1:?usage: runtable|mirror|record|submit|move|retarget|status|shims|body}"; shift
 T=benchmark/02_tasks
 # setting | scripts dir (under benchmark/02_tasks) | train wrapper | TamIA env (scripts/cluster/) | trainer | epochs | dataset name
 B=brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma; C=abdomen_healthy/chaos/5_scripts_chaos; O=brain_healthy/on-harmony/5_scripts_on-harmony
@@ -399,6 +399,29 @@ if [ "${MODE}" = move ]; then
   fi
   echo "next: ALLOW_EXISTING=1 bash scripts/cluster/ginipa/ginipa.sh record vulcan${NEWU} && bash scripts/cluster/ginipa/ginipa.sh submit vulcan${NEWU}"
   echo "      then: bash scripts/cluster/ginipa/ginipa.sh mirror tamia   (post_poller.sh reads the updated run table: these folds become vulcan folds)"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------------------------------------------- retarget
+# Re-target a Vulcan unit that NEVER STARTED to Killarney (Vulcan queue too slow): refuses unless every job of its chain is CANCELLED
+# (scancel them first) and no fold dir exists; the run table rows become cluster killarney, unit K_<rest> (same RUN_IDs, same folds);
+# the old unit dir moves to <root>/_superseded_retarget/. Then: ginipa.sh record killarney K_...; on Killarney killarney.sh prep K_...;
+# killarney.sh submit K_...  (the datasets must be staged on Killarney).
+if [ "${MODE}" = retarget ]; then
+  [ "${GINIPA_CLUSTER}" = vulcan ] || { echo "retarget runs on Vulcan"; exit 1; }
+  U="${1:?retarget <vulcan unit>}"; UD="${R}/vulcan/${U}"; [ -f "${UD}/JOBS.tsv" ] || { echo "no ${UD}/JOBS.tsv"; exit 1; }
+  for j in $(cut -f3 "${UD}/JOBS.tsv" | tr ',' ' '); do
+    st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"; [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: job ${j} is ${st:-unknown} (scancel the whole chain first)"; exit 1; }
+  done
+  while IFS=$'\t' read -r cmd log name done_; do
+    res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"; [ ! -e "${res}" ] || ls "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1 \
+      && { echo "REFUSING: ${name} has a fold dir under ${res} (it started)"; exit 1; } || true
+  done < "${UD}/index.tsv"
+  NU="K_${U#V_}"; cp "${RT}" "${RT}.bak_retarget_${U}_$(date +%Y%m%d_%H%M%S)"
+  awk -F'\t' -v OFS='\t' -v u="${U}" -v nu="${NU}" 'NR>1 && $8=="vulcan" && $9==u {$8="killarney"; $9=nu} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
+  mkdir -p "${R}/_superseded_retarget"; mv "${UD}" "${R}/_superseded_retarget/${U}"
+  echo "$(date '+%F %T') retargeted never-started Vulcan unit ${U} (chain cancelled) -> Killarney unit ${NU}" | tee -a "${R}/LAUNCH_INFO" "${R}/_launch/LAUNCH_LOG.txt"
+  echo "next: bash scripts/cluster/ginipa/ginipa.sh record killarney ${NU}; Killarney: killarney.sh prep ${NU} && killarney.sh submit ${NU}"
   exit 0
 fi
 
