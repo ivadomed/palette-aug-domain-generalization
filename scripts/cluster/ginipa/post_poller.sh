@@ -19,7 +19,9 @@ POLL_S="${POLL_S:-1200}"; MAX_DAYS="${MAX_DAYS:-12}"; T=benchmark/02_tasks
 if [ -z "${DRY:-}" ]; then exec 8> "${PD}/poller.lock"; flock -n 8 || { echo "[ginipa-post] another instance holds the lock"; exit 1; }; fi
 log() { echo "[$(date '+%F %T')] [ginipa-post] $*"; }
 run() { if [ -n "${DRY:-}" ]; then echo "[dry] $*"; else "$@"; fi; }
-# Vulcan run dir of a setting = what its train wrapper computes (PREDICTIONS_ROOT/MODEL_TYPE/TRAINING_CONTRAST/auglab/RID)
+# Vulcan run dir of a setting = what its train wrapper computes (PREDICTIONS_ROOT/MODEL_TYPE/TRAINING_CONTRAST/auglab/RID); checked
+# 2026-11-02 equal to nnUNet_results of the recorded fold commands on Vulcan (onh_T2w, openms_flair, atlas_t1w) and TamIA (brats_t1n,
+# onh_T1w, onh_T2w, with tamia_env*.sh)
 rundir() {  # $1 scripts dir (under benchmark/02_tasks), $2 train wrapper, $3 RID, [$4 tamia env -> TamIA formula, evaluated there]
   local w="${T}/$1/04_train/$2" envf
   envf="$(grep -o 'source "$(dirname "$0")/../00_utils/env[a-z0-9_]*\.sh"' "${w}" | sed 's|.*/00_utils/||; s|"$||')"
@@ -49,7 +51,8 @@ while :; do
           if [ -n "${fd}" ] && [ -f "${fd}/.ginipa_synced_from_tamia" ]; then nd=$((nd + 1)); continue; fi
           TRD="$(rundir "${sd}" "${tw}" "${rid}" "${TENV[${s%%_*}]}")" || { st_="${st_} f${f}:tamia(ssh?)"; continue; }
           tfd="$("${SSH[@]}" "ls -d ${TRD}/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} 2>/dev/null | head -1")" || { st_="${st_} f${f}:tamia(ssh?)"; continue; }
-          tst="$("${SSH[@]}" "d=${tfd:-/nonexistent}; [ -f \$d/checkpoint_final.pth ] && [ -f \$d/checkpoint_best.pth ] && [ ! -e \$d/checkpoint_latest.pth ] && [ \$(( \$(date +%s) - \$(stat -c %Y \$d/checkpoint_final.pth) )) -gt 600 ] && echo done || echo training")" || tst=ssh
+          [ -n "${tfd}" ] || { st_="${st_} f${f}:tamia(no fold dir yet under ${TRD})"; continue; }   # path shown: a wrong derivation is visible
+          tst="$("${SSH[@]}" "d=${tfd}; [ -f \$d/checkpoint_final.pth ] && [ -f \$d/checkpoint_best.pth ] && [ ! -e \$d/checkpoint_latest.pth ] && [ \$(( \$(date +%s) - \$(stat -c %Y \$d/checkpoint_final.pth) )) -gt 600 ] && echo done || echo training")" || tst=ssh
           [ "${tst}" = done ] || { st_="${st_} f${f}:tamia(${tst})"; continue; }
           vfd="${VRD}/${tfd#${TRD}/}"; log "${s} f${f}: TamIA ${tfd} -> ${vfd}"
           run mkdir -p "${vfd}"
