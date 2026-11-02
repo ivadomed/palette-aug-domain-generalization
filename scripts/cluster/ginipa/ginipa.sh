@@ -12,6 +12,8 @@
 #   bash scripts/cluster/ginipa/ginipa.sh runtable              # Vulcan: new arm root + run_table.tsv from PIN.conf + plan.conf (no jobs)
 #   bash scripts/cluster/ginipa/ginipa.sh record <cluster> [UNIT...]  # vulcan|killarney on Vulcan, tamia on TamIA: record + pin + verify
 #   bash scripts/cluster/ginipa/ginipa.sh submit <cluster> [--dry-run] [UNIT...]   # vulcan|tamia here; killarney: killarney.sh submit
+#   bash scripts/cluster/ginipa/ginipa.sh move <TamIA unit> [--dry-run]   # Vulcan: TamIA stall -> resume that unit's folds on Vulcan L40S
+#   bash scripts/cluster/ginipa/ginipa.sh mirror tamia            # Vulcan: copy the run table to TamIA's arm root
 #   bash scripts/cluster/ginipa/ginipa.sh status [cluster]       # epoch, median s/epoch, peak VRAM, final, per recorded fold
 #   bash scripts/cluster/ginipa/ginipa.sh shims check|install    # the 9 additive <DS>GinIpaTrainers.py shims in this cluster's venv
 # PROBE=1: probe root + plan_probe.conf, throwaway results base <scratch>/_ginipa_probe, every segment = `timeout PROBE_SECONDS`
@@ -29,7 +31,7 @@ case "${GINIPA_CLUSTER}" in tamia) RB=/scratch/p/paulh ;; *) RB=/scratch/paulh ;
 export SCRATCH="${RB}"
 STATE="${GINIPA_ROOT_FILE:-${RB}/_ginipa_root${PROBE:+_probe}.txt}"
 PLAN="${GINIPA_PLAN:-${GDIR}/plan${PROBE:+_probe}.conf}"
-MODE="${1:?usage: runtable|record|submit|status|shims}"; shift
+MODE="${1:?usage: runtable|mirror|record|submit|move|status|shims|body}"; shift
 T=benchmark/02_tasks
 # setting | scripts dir (under benchmark/02_tasks) | train wrapper | TamIA env (scripts/cluster/) | trainer | epochs | dataset name
 B=brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma; C=abdomen_healthy/chaos/5_scripts_chaos; O=brain_healthy/on-harmony/5_scripts_on-harmony
@@ -75,7 +77,8 @@ if [ "${MODE}" = shims ]; then
   #    registered with it (login node: imports only, a few CPU-seconds)
   for withpin in 0 1; do
     pp="${REPO}"; [ "${withpin}" = 1 ] && pp="${GINIPA_PIN}:${REPO}"
-    out="$(cd /tmp && NNUNET_PROJECT_ROOT="${REPO}" PYTHONPATH="${pp}" "${REPO}/.venv/bin/python" - ${SH} 2>&1 <<'PY'
+    mkdir -p "${RB}/_ginipa_shimtest_cwd"   # empty cwd + python -P: never import stray modules from a shared /tmp (TamIA has one)
+    out="$(cd "${RB}/_ginipa_shimtest_cwd" && NNUNET_PROJECT_ROOT="${REPO}" PYTHONPATH="${pp}" "${REPO}/.venv/bin/python" -P - ${SH} 2>&1 <<'PY'
 import importlib.util, os, sys
 n0 = len(sys.path)
 for f in sys.argv[1:]:
@@ -169,6 +172,15 @@ done < <(tail -n +2 "${RT}")
 TS="$(cat "${R}/TS")"
 rows_of() { awk -F'\t' -v c="$1" -v u="$2" 'NR>1 && $8==c && (u=="" || $9==u)' "${RT}"; }
 units_of() { awk -F'\t' -v c="$1" 'NR>1 && $8==c {print $9}' "${RT}" | awk '!s[$0]++'; }
+
+# ------------------------------------------------------------------------------------------------------------------ mirror
+if [ "${MODE}" = mirror ]; then   # Vulcan -> TamIA: the arm root's run table (+ TS, plan, PIN.conf) and TamIA's state file
+  [ "${GINIPA_CLUSTER}" = vulcan ] && [ "${1:-}" = tamia ] || { echo "usage (Vulcan): ginipa.sh mirror tamia   (Killarney: killarney.sh prep)"; exit 1; }
+  TR_="${R/#\/scratch\/paulh\//\/scratch\/p\/paulh\/}"; TST="/scratch/p/paulh/$(basename "${STATE}")"
+  tar cf - -C "${R}" run_table.tsv TS "$(basename "${PLAN}")" PIN.conf LAUNCH_INFO | ssh -o BatchMode=yes tamia.alliancecan.ca \
+    "mkdir -p '${TR_}' && tar xf - -C '${TR_}' && echo '${TR_}' > '${TST}' && md5sum '${TR_}/run_table.tsv'"
+  echo "local  $(md5sum "${RT}")"; echo "[mirror] TamIA root ${TR_} (state ${TST})"; exit 0
+fi
 
 # ------------------------------------------------------------------------------------------------------------------ record
 verify_cmd() {   # $1 cmd file, $2 run-table row, $3 cluster the job runs on, $4 pin dir on that cluster, $5 repo there
@@ -267,7 +279,7 @@ while IFS=\$'\t' read -r cmd log name donefile; do [ -n "\${donefile}" ] && [ -f
 # preflight: the pin this run table names, on disk, clean; every fold command puts it first and reads the pinned config
 export GINIPA_EXPECT_COMMIT='${GINIPA_COMMIT}' GINIPA_EXPECT_CONFIG_MD5='${GINIPA_CONFIG_MD5}'
 ( source scripts/cluster/ginipa/pin_env.sh ) || { echo "[ginipa] PIN PREFLIGHT FAILED -- refusing"; exit 4; }
-PYTHONPATH='${GINIPA_PIN}' .venv/bin/python - '${GINIPA_PIN}' '${GINIPA_PIN}/auglab/configs/${GINIPA_CONFIG}' '${GINIPA_CONFIG_MD5}' "\${INDEX}" <<'PY' || { echo "[ginipa] PREFLIGHT FAILED -- refusing"; exit 4; }
+PYTHONPATH='${GINIPA_PIN}' .venv/bin/python -P - '${GINIPA_PIN}' '${GINIPA_PIN}/auglab/configs/${GINIPA_CONFIG}' '${GINIPA_CONFIG_MD5}' "\${INDEX}" <<'PY' || { echo "[ginipa] PREFLIGHT FAILED -- refusing"; exit 4; }
 import hashlib, importlib, re, sys
 pin, cfg, md5, index = sys.argv[1:5]
 bad = []
@@ -303,6 +315,7 @@ kill \${SMI} 2>/dev/null; echo "[ginipa] done rc_all=\${rc_all}"; exit \${rc_all
 EOS
   echo "${body}"
 }
+if [ "${MODE}" = body ]; then write_body "${1:?body <unit dir> <cluster>}" "${2:?cluster}"; exit 0; fi   # used by killarney.sh submit
 if [ "${MODE}" = submit ]; then
   CL="${1:?submit <vulcan|tamia> [--dry-run] [UNIT...]}"; shift; DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
   [ "${CL}" = "${GINIPA_CLUSTER}" ] || { echo "submit ${CL} on ${CL} (killarney: scripts/cluster/ginipa/killarney.sh submit)"; exit 1; }
@@ -337,6 +350,50 @@ if [ "${MODE}" = submit ]; then
   exit 0
 fi
 
+# -------------------------------------------------------------------------------------------------------------------- move
+# Move a TamIA unit's folds to VULCAN L40S (TamIA fair-share stall: see memory reference_training_speed_by_cluster_20261030): the same
+# RUN_IDs resume from TamIA's checkpoint_latest (<= 50 epochs repeated). Order (Vulcan login node, TamIA ssh master):
+#   1. scancel the unit's TamIA chain (tail first);  2. ginipa.sh move <UNIT> [--dry-run]  (refuses while a ginipa_<UNIT> job is queued
+#   on TamIA; rsync + md5 of checkpoint_latest / checkpoint_best per fold into the Vulcan run dir; run table rows -> cluster vulcan, unit
+#   MV_<setting>_f<k>, backup kept);  3. ALLOW_EXISTING=1 ginipa.sh record vulcan MV_...;  4. ginipa.sh submit vulcan MV_...
+if [ "${MODE}" = move ]; then
+  [ "${GINIPA_CLUSTER}" = vulcan ] || { echo "move runs on Vulcan"; exit 1; }
+  U="${1:?move <TamIA unit> [--dry-run]}"; DRY=0; [ "${2:-}" = --dry-run ] && DRY=1
+  SSHT=(ssh -n -o BatchMode=yes -o ConnectTimeout=30 tamia.alliancecan.ca)
+  q="$("${SSHT[@]}" "squeue -u ${USER} -h -o '%i %j'")" || { echo "TamIA unreachable"; exit 4; }
+  if grep -q " ${TAG}_${U}\$" <<<"${q}"; then echo "REFUSING: TamIA still queues $(grep " ${TAG}_${U}\$" <<<"${q}" | awk '{print $1}' | tr '\n' ' ')-- scancel them (tail first)"; [ "${DRY}" = 1 ] || exit 1; fi
+  declare -A TE=([brats]=tamia_env.sh [chaos]=tamia_env_chaos.sh [onh]=tamia_env_onharmony.sh [openms]=tamia_env_openms.sh [tf2]=tamia_env_toothfairy2.sh
+    [ispy2]=tamia_env_ispy2.sh [pelvic]=tamia_env_totalseg-pelvic.sh [atlas]=tamia_env_atlas-liver-hcc.sh [panseg]=tamia_env_pansegdata.sh)
+  Q2='for f in checkpoint_latest.pth checkpoint_best.pth; do [ -f $f ] && echo $f $(stat -c %s $f) $(md5sum < $f | cut -c1-32); done; true'
+  NEWU=""
+  while IFS=$'\t' read -r s f dn tc ep tr ld cl unit g seg st cm cfg md5 rid tw sd; do
+    envf="$(grep -o 'source "$(dirname "$0")/../00_utils/env[a-z0-9_]*\.sh"' "${T}/${sd}/04_train/${tw}" | sed 's|.*/00_utils/||; s|"$||')"
+    VRD="$( source "${T}/${sd}/00_utils/${envf}" >/dev/null 2>&1; echo "${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab/${rid}" )"
+    TRD="$("${SSHT[@]}" "bash -lc 'cd ${REPO} && export SCRATCH=/scratch/p/paulh && source ${T}/${sd}/00_utils/${envf} >/dev/null 2>&1 && source scripts/cluster/${TE[${s%%_*}]} >/dev/null 2>&1 && echo \${PREDICTIONS_ROOT}/\${MODEL_TYPE}/\${TRAINING_CONTRAST}/auglab/${rid}'")"
+    tfd="$("${SSHT[@]}" "ls -d ${TRD}/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} 2>/dev/null | head -1")"
+    [ -n "${tfd}" ] || { echo "REFUSING: no fold_${f} under TamIA ${TRD}"; exit 1; }
+    vfd="${VRD}/${tfd#${TRD}/}"; echo "[move] ${s} f${f}: TamIA ${tfd} -> Vulcan ${vfd}"
+    if [ "${DRY}" = 0 ]; then
+      mkdir -p "${vfd}"
+      rsync -a -e "ssh -o BatchMode=yes" --include='*.json' --exclude='*' "tamia.alliancecan.ca:$(dirname "${tfd}")/" "$(dirname "${vfd}")/"
+      rsync -a -e "ssh -o BatchMode=yes" --exclude=wandb/ --exclude='validation/' "tamia.alliancecan.ca:${tfd}/" "${vfd}/"
+      L="$(cd "${vfd}" && bash -c "${Q2}")"; Rm="$("${SSHT[@]}" "cd ${tfd} && ${Q2}")"
+      [ "$L" = "$Rm" ] && [ -n "$L" ] || { echo "MISMATCH ${s} f${f}: Vulcan '$L' / TamIA '$Rm'"; exit 5; }
+      echo "   md5 OK: $(echo "$L" | tr '\n' ' ')" | tee -a "${R}/MOVES.log"
+    fi
+    NEWU="${NEWU} MV_${s}_f${f}"
+  done < <(rows_of tamia "${U}")
+  [ -n "${NEWU}" ] || { echo "no TamIA rows for unit ${U}"; exit 1; }
+  if [ "${DRY}" = 0 ]; then
+    cp "${RT}" "${RT}.bak_move_${U}_$(date +%Y%m%d_%H%M%S)"
+    awk -F'\t' -v OFS='\t' -v u="${U}" 'NR>1 && $8=="tamia" && $9==u {$8="vulcan"; $9="MV_"$1"_f"$2; $10=0} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
+    echo "$(date '+%F %T') moved TamIA unit ${U} -> Vulcan units${NEWU}" | tee -a "${R}/MOVES.log" >> "${R}/LAUNCH_INFO"
+  fi
+  echo "next: ALLOW_EXISTING=1 bash scripts/cluster/ginipa/ginipa.sh record vulcan${NEWU} && bash scripts/cluster/ginipa/ginipa.sh submit vulcan${NEWU}"
+  echo "      then: bash scripts/cluster/ginipa/ginipa.sh mirror tamia   (post_poller.sh reads the updated run table: these folds become vulcan folds)"
+  exit 0
+fi
+
 # ------------------------------------------------------------------------------------------------------------------ status
 if [ "${MODE}" = status ]; then
   for idx in "${R}"/${1:-*}/*/index.tsv; do
@@ -348,7 +405,7 @@ if [ "${MODE}" = status ]; then
       ts=$(grep -o "Epoch time: [0-9.]* s" "${L}" 2>/dev/null | awk '{print $3}' | tail -n +3 | sort -n || true)
       med=$(echo "${ts}" | awk 'NF{a[++n]=$1} END{if(n) print a[int((n+1)/2)]; else print "NA"}'); nep=$(echo "${ts}" | grep -c . || true)
       last=$(grep -oE "Epoch [0-9]+" "${L}" 2>/dev/null | tail -1 | grep -oE '[0-9]+$' || true)
-      g="${G[$i]:-?}"; vr=$(cat "${UD}"/vram_*.csv 2>/dev/null | awk -F', ' -v g="${g}" '$2==g {gsub(/ MiB/,"",$3); if ($3>m) m=$3} END{print m+0}')
+      g="${G[$i]:-?}"; vr=$(cat "${UD}"/vram_*.csv 2>/dev/null | awk -F', ' -v g="${g}" '$2+0==g+0 {v=$3; gsub(/ MiB/,"",v); if (v+0>m+0) m=v+0} END{print m+0}')
       printf '   %-70s GPU%s epoch=%-5s med_s/ep=%-7s (n=%s) peakVRAM=%sMiB final=%s\n' "${name#fold?_}_f${f}" "${g}" "${last:-NA}" "${med}" "${nep}" "${vr}" \
         "$([ -f "${done_}" ] && echo yes || echo no)"
       i=$((i+1))
