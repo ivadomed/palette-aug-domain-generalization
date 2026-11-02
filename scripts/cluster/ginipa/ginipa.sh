@@ -414,8 +414,8 @@ if [ "${MODE}" = retarget ]; then
     st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"; [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: job ${j} is ${st:-unknown} (scancel the whole chain first)"; exit 1; }
   done
   while IFS=$'\t' read -r cmd log name done_; do
-    res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"; [ ! -e "${res}" ] || ls "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1 \
-      && { echo "REFUSING: ${name} has a fold dir under ${res} (it started)"; exit 1; } || true
+    res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"
+    if ls -d "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1; then echo "REFUSING: ${name} has a fold dir under ${res} (it started)"; exit 1; fi
   done < "${UD}/index.tsv"
   NU="K_${U#V_}"; cp "${RT}" "${RT}.bak_retarget_${U}_$(date +%Y%m%d_%H%M%S)"
   awk -F'\t' -v OFS='\t' -v u="${U}" -v nu="${NU}" 'NR>1 && $8=="vulcan" && $9==u {$8="killarney"; $9=nu} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
