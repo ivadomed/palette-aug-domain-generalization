@@ -320,6 +320,14 @@ if [ "${MODE}" = submit ]; then
   CL="${1:?submit <vulcan|tamia> [--dry-run] [UNIT...]}"; shift; DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
   [ "${CL}" = "${GINIPA_CLUSTER}" ] || { echo "submit ${CL} on ${CL} (killarney: scripts/cluster/ginipa/killarney.sh submit)"; exit 1; }
   SEL="${*:-$(units_of "${CL}")}"
+  if [ "${CL}" = tamia ]; then   # launch rule: at most GINIPA_TAMIA_MAX_NODES (4) whole nodes with a live chain at once
+    act=0; new=0
+    for u in $(units_of tamia); do UD="${R}/tamia/${u}"; [ -f "${UD}/JOBS.tsv" ] || continue
+      while IFS=$'\t' read -r _ _ _ d; do [ -n "$d" ] && [ -f "$d" ] || { act=$((act + 1)); break; }; done < "${UD}/index.tsv"; done
+    for u in ${SEL}; do [ -f "${R}/tamia/${u}/JOBS.tsv" ] || new=$((new + 1)); done
+    [ $((act + new)) -le "${GINIPA_TAMIA_MAX_NODES:-4}" ] || { echo "REFUSING: ${act} TamIA units still training + ${new} new > ${GINIPA_TAMIA_MAX_NODES:-4} nodes (launch rule)"; exit 1; }
+    echo "[submit] TamIA nodes: ${act} active + ${new} new <= ${GINIPA_TAMIA_MAX_NODES:-4}"
+  fi
   for u in ${SEL}; do
     UD="${R}/${CL}/${u}"
     [ -f "${UD}/VERIFY_PASSED" ] || { echo "REFUSING: ${CL}/${u} not recorded + verified"; exit 1; }
