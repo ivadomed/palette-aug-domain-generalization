@@ -64,7 +64,7 @@ submit)
   # run table: one row per (setting, arm); job columns = chain job ids of the units holding its folds
   for c in T1w T2w dwi_ap; do for a in flat texture; do
     j=(); for k in 0 1 2; do
-      u="$(for uu in ${UNITS}; do rows "${uu}" | tr '|' '\n' | grep -qx "${c} ${a} ${k}" && echo "${uu}"; done)"
+      u="$(for uu in ${UNITS}; do rows "${uu}" | tr '|' '\n' | grep -x "${c} ${a} ${k}" >/dev/null && echo "${uu}"; done || true)"
       j+=("tamia:${u}:$(tr ' ' ',' < "${ROOT}/${u}/SUBMITTED" | sed 's/,$//')"); done
     grep -q "on-harmony_${c}_lowdata_n05_${a}_${TS}" "${T}" 2>/dev/null || printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "onh_${c}" "${a}" 5 \
       "on-harmony_${c}_lowdata_n05_${a}_${TS}" "${j[@]}" "tamia_2x23:59" "${HEAD}" "${AH}" "${AD}" "$(date '+%F %T')" >> "${T}"
