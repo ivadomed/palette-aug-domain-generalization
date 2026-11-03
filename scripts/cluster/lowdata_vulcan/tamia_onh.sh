@@ -71,6 +71,7 @@ submit)
   done; done
   cat "${T}" ;;
 status)
+  set +e +o pipefail   # missing fold dirs / logs (not started yet) are normal here
   TS="$(cat "${ROOT}/TS")"
   for c in T1w T2w dwi_ap; do for a in flat texture; do for k in 0 1 2; do
     d="$(ls -d "${SCRATCH}"/on-harmony/8_results/01_predictions/on_harmony_model/${c}/auglab/on-harmony_${c}_lowdata_n05_${a}_${TS}/Dataset*/*/fold_${k} 2>/dev/null | head -1)"
