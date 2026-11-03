@@ -130,6 +130,7 @@ if [ "${MODE}" = probe ] || [ "${MODE}" = train ]; then
     free_gb=$(( $(nvidia-smi -i "${g}" --query-gpu=memory.free --format=csv,noheader,nounits | tr -d ' ') / 1024 ))
     [ "${free_gb}" -ge $(( ${NG[${g}]} * ${MIN_FREE_GB_PER_FOLD:-10} )) ] || fail train "GPU ${g} has ${free_gb} GB free for ${NG[${g}]} folds"
   done
+  pgrep -f "${TRAINER%%__*}" >/dev/null && fail train "a ${TRAINER%%__*} process is still running (a rerun must not train a fold twice: wait for it / kill it first)"
   EP_ENV=(); [ "${MODE}" = probe ] && EP_ENV=(NNUNET_NUM_EPOCHS="${PROBE_EPOCHS:-20}")
   vlog "train start: layout=${LAYOUT:-probe} folds/GPU $(for g in "${!NG[@]}"; do printf 'gpu%s=%s ' "${g}" "${NG[${g}]}"; done)main=${HEAD_SHA} AugLab=${AL_SHA} (dirty ${AL_DIRTY}) $(for k in "${!RID[@]}"; do printf '%s ' "${RID[${k}]}"; done)"
   pids=()
