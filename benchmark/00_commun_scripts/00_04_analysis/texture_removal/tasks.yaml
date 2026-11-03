@@ -10,7 +10,9 @@
 # <case>_0000.nii.gz). The texture-removed copy is a NEW TEST ITEM in the standard layout: <input>_texrm (a symlink to
 # the generated dir under work_root), predicted by the shared drivers with PREDICT_INPUT_SUFFIX=_texrm
 # PREDICT_OUTPUT_SUBDIR=texrm (-> <run>/fold{k}/texrm/<item>/); chaos amos/sliver07 crops instead go to a crop-reuse
-# dir work_root/fovcrop/<dataset>/t1in/imagesTs_<item> for the shared fov_crop_predict_evaluate.sh.
+# dir work_root/fovcrop/<dataset>/t1in/imagesTs_<item> (kept for fov_crop_predict_evaluate.sh's own layout).
+# crop_source (chaos amos/sliver07): the crop-before-predict crops the ladder predictions used; prepare.py exposes them
+# as the test item <item>_fovcrop (symlink) so the dataset's own cross-mode predict shim can read them.
 # passthrough: in-domain items a dataset's evaluator always scores (hard-coded item lists); 05_evaluate.sh links
 # fold{k}/texrm/<item> to the ORIGINAL predictions so the evaluator runs unchanged -- the analysis never reads them.
 # Metrics of the texture-removed predictions land next to the originals as <category>_<RUN_ID>_texrm (Mandible:
@@ -37,9 +39,12 @@ tasks:
       - {key: chaos__t1out, item: t1out, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_t1out}
       - {key: chaos__t2spir, item: t2spir, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_t2spir}
       - {key: chaos__ct, item: ct, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_ct}
-      - {key: amos__ct, item: ct, input: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_ct}
-      - {key: amos__mri, item: mri, input: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_mri}
-      - {key: sliver07__ct, item: ct, input: /scratch/paulh/srcsm_match/fovmirror/sliver07/_fovcrop/vulcanprep/t1in/imagesTs_ct}
+      - {key: amos__ct, item: ct, input: benchmark/02_tasks/abdomen_healthy/amos/2_nnUNet_amos/raw/imagesTs_ct_fovcrop,
+         crop_source: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_ct}
+      - {key: amos__mri, item: mri, input: benchmark/02_tasks/abdomen_healthy/amos/2_nnUNet_amos/raw/imagesTs_mri_fovcrop,
+         crop_source: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_mri}
+      - {key: sliver07__ct, item: ct, input: benchmark/02_tasks/abdomen_healthy/sliver07/2_nnUNet_sliver07/raw/imagesTs_ct_fovcrop,
+         crop_source: /scratch/paulh/srcsm_match/fovmirror/sliver07/_fovcrop/vulcanprep/t1in/imagesTs_ct}
 
   Brain:
     group: interface

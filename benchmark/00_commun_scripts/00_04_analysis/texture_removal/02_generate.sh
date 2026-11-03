@@ -2,7 +2,7 @@
 # Step 2: texture-removed copies of every OOD input (gen_jobs.tsv written by 01_prepare.sh), one run_job CPU job per
 # (task, item), output <work_root>/images/<task>/<item>/ (linked as <input>_texrm; same file names, same
 # geometry). Per-case QC rows (case ids: scratch only) in /scratch/paulh/texture_removal_test/gen_stats/. Rerunning skips files already written.
-#   bash 02_generate.sh [--wait] [task ...]      (default: every task in gen_jobs.tsv)
+#   [OVERWRITE=1] bash 02_generate.sh [--wait] [task ...]      (default: every task in gen_jobs.tsv)
 set -euo pipefail
 ROOT=/project/aip-jcohen/paulh/mri_synthesis_project
 HERE="${ROOT}/benchmark/00_commun_scripts/00_04_analysis/texture_removal"
@@ -22,7 +22,7 @@ while IFS=$'\t' read -r task key input output lo hi restricted; do
   run_job --name "texrm_gen_${key:0:40}" --gpus 0 --cpus 8 --mem 48G --time "${t}" ${WAIT} \
     --log "${OUT}/logs/gen_${task}_${key}.log" -- \
     .venv/bin/python "${HERE}/texture_removal.py" --in-dir "${input}" --out-dir "${output}" ${win} \
-      --k "${K}" --cells "${CELLS}" --salt "${task}/${key}" --workers 6 --stats "${OUT}/gen_stats/${task}__${key}.tsv" &
+      --k "${K}" --cells "${CELLS}" --salt "${task}/${key}" --workers 6 ${OVERWRITE:+--overwrite} --stats "${OUT}/gen_stats/${task}__${key}.tsv" &
   sleep 2
 done < <(tail -n +2 "${OUT}/gen_jobs.tsv")
 wait

@@ -24,7 +24,8 @@ Two deliberate adaptations to whole test images (PA runs on training patches aft
   * Voronoi distances in millimetres (voxel index x spacing): PA's patches are on nnU-Net's resampled grid, so
     index distances there are approximately physical distances.
 
-Writes float32 NIfTI with the input's origin / spacing / direction (SimpleITK, nnU-Net's reader), same file name.
+Writes float32 NIfTI with the input's own header (nibabel; only the data type changes), same file name; geometry is
+checked by re-reading both files with SimpleITK (nnU-Net's reader).
 Per-case QC row (geometry re-read, region count, region-mean preservation) -> --stats TSV (scratch only: case ids).
 
   python texture_removal.py --in-dir <imagesTs_x> --out-dir <dir> [--ct-window LO HI] [--k 4] [--cells 6]
@@ -39,6 +40,7 @@ import zlib
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+import nibabel as nib
 import numpy as np
 import SimpleITK as sitk
 
@@ -159,7 +161,16 @@ def process_one(args):
         raise SystemExit(f"multi-component image not supported: {src}")
     out, st = remove_texture(img, case_id_of(src.name), salt, k, cells, ct_window)
     tmp = dst.with_name(dst.name + ".tmp.nii.gz")
-    sitk.WriteImage(out, str(tmp), useCompression=True)
+    # write through nibabel with the ORIGINAL header (sform/qform untouched, only the data type -> float32):
+    # SimpleITK's writer re-derives the header and can perturb a non-orthonormal direction (seen on TotalSeg T1 GRE)
+    src_nib = nib.load(str(src))
+    hdr = src_nib.header.copy()
+    hdr.set_data_dtype(np.float32)
+    hdr["scl_slope"], hdr["scl_inter"] = np.nan, np.nan
+    data = sitk.GetArrayFromImage(out).transpose(2, 1, 0)       # sitk (z, y, x) -> nibabel (i, j, k)
+    if data.shape != src_nib.shape[:3]:
+        raise SystemExit(f"shape mismatch {data.shape} vs {src_nib.shape}: {src}")
+    nib.Nifti1Image(data.astype(np.float32), None, hdr).to_filename(str(tmp))   # affine None: keep sform/qform
     back = sitk.ReadImage(str(tmp))
     st["geometry_ok"] = int(_geom(back) == _geom(img))
     if not st["geometry_ok"]:

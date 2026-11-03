@@ -116,6 +116,14 @@ def main():
     import torch
 
     for tname, t in cfg["tasks"].items():
+        for it in t["items"]:                       # crop-before-predict crops -> test item <item>_fovcrop (symlink)
+            if it.get("crop_source"):
+                lk, tgt = P(it["input"]), Path(it["crop_source"])
+                if not (lk.is_symlink() and lk.resolve() == tgt.resolve()):
+                    if lk.exists() or lk.is_symlink():
+                        sys.exit(f"ERROR: {lk} exists and is not the expected link to {tgt}")
+                    if not a.check_only:
+                        lk.symlink_to(tgt)
         d = json.loads(P(t["ladder"]).read_text())
         rk, labs = d["run_keys"], d["labels"]
         for i, m in ((4, "flat"), (5, "texture")):
@@ -201,12 +209,13 @@ def main():
             src = P(it["input"])
             gen_dir = work / "images" / tname / it["key"]
             gen_dir.mkdir(parents=True, exist_ok=True)
-            if "/_fovcrop/" in str(src):            # chaos amos/sliver07: crop-reuse dir for fov_crop_predict_evaluate.sh
+            if it.get("crop_source"):               # chaos amos/sliver07: also the fov driver's crop-reuse layout
                 ds = it["key"].split("__")[0]
                 cdir = work / "fovcrop" / ds / t["training_contrast"]
                 cdir.mkdir(parents=True, exist_ok=True)
-                links = {cdir / src.name: gen_dir,
-                         cdir / src.name.replace("imagesTs_", "labelsTs_"): src.parent / src.name.replace("imagesTs_", "labelsTs_")}
+                cs = Path(it["crop_source"])
+                links = {cdir / cs.name: gen_dir, src.parent / (src.name + "_texrm"): gen_dir,
+                         cdir / cs.name.replace("imagesTs_", "labelsTs_"): cs.parent / cs.name.replace("imagesTs_", "labelsTs_")}
             else:
                 links = {src.parent / (src.name + "_texrm"): gen_dir}
             for lk, tgt in links.items():

@@ -38,8 +38,6 @@ def main():
                     size += (td / f).stat().st_size
         for it in t["items"]:
             src = REPO / it["input"] if not it["input"].startswith("/") else Path(it["input"])
-            if "/_fovcrop/" in str(src):
-                continue                                        # Abdomen crops: separate staging (scratch, not repo)
             tx = src.parent / (src.name + "_texrm")
             if not any(tx.glob("*_0000.nii.gz")):
                 sys.exit(f"ERROR: {tx} is empty -- run 02_generate.sh {task} first")

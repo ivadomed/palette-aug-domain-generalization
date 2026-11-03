@@ -13,8 +13,8 @@ PREDICT_OUTPUT_SUBDIR=texrm -> <run dir>/fold{k}/texrm/<item>/ (Mandible: texrm/
 the run dir (Dataset*/<trainer>__nnUNetPlans__3d_fullres), never from a method wrapper.
 
 Runs on Vulcan (Slurm) or tassan (source scripts/cluster/tassan_env.sh first: set_slot backend, folds wrap onto the
-two slot/GPU pairs). Abdomen's amos/sliver07 crops go through the shared fov_crop_predict_evaluate.sh instead (not
-covered here yet).
+two slot/GPU pairs). Abdomen's amos/sliver07 crop-before-predict crops are the test item <item>_fovcrop (+ _texrm),
+predicted by amos/sliver07's own cross-mode shim; 05_evaluate.sh scores them with fov_crop_predict_evaluate.sh.
 
   python predict_texrm.py <task> [--condition texrm|orig] [--models flat,texture] [--folds all|0|1|2] [--dry-run]
                           [--status]
@@ -68,7 +68,12 @@ GROUPS = {
     "HCC": [(f"{T}/liver_hcc/lld-mmri-hcc/5_scripts_lld-mmri-hcc", "env.sh", "05_01_predict_common.sh",
              "t2wi dwi inphase outphase", "", SUF, SUB)],
     "Abdomen": [(f"{T}/abdomen_healthy/chaos/5_scripts_chaos", "env.sh", "05_01_predict_common.sh", "t1out t2spir ct",
-                 "", SUF, SUB)],   # + amos/sliver07 crops: fov_crop_predict_evaluate.sh (separate step)
+                 "", SUF, SUB),
+                # crop-before-predict crops (test item <item>_fovcrop, the inputs of the ladder's fov_crop predictions)
+                (f"{T}/abdomen_healthy/amos/5_scripts_amos", "env.sh", "05_01_predict_common.sh", "ct mri", "",
+                 "_fovcrop" + SUF, SUB),
+                (f"{T}/abdomen_healthy/sliver07/5_scripts_sliver07", "env.sh", "05_01_predict_common.sh", "ct", "",
+                 "_fovcrop" + SUF, SUB)],
 }
 
 
@@ -112,7 +117,8 @@ def main():
                     nin = None
                     for x in t["items"]:
                         if x["item"] == it and x["key"].split("__")[0] == Path(sdir).name.replace("5_scripts_", ""):
-                            nin = len(list((REPO / (x["input"] + suf)).glob("*_0000.nii.gz")))
+                            nin = len(list((REPO / (x["input"] + (SUF if a.condition == "texrm" else "")))
+                                           .glob("*_0000.nii.gz")))
                     got = [len(list((pr / f"fold{k}" / sub / it).glob("*.nii.gz"))) for k in (0, 1, 2)]
                     ok = nin is not None and all(g == nin for g in got)
                     print(f"{a.task:9s} {m:8s} {Path(sdir).name[10:]:22s} {it:18s} in={nin} folds={got} "
