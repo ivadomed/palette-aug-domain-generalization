@@ -26,7 +26,7 @@ vrun() { if [ "$(hostname -s)" = klogin02 ]; then ssh -n -o BatchMode=yes vulcan
 RS_E="ssh klogin02 ssh -o BatchMode=yes"; [ "$(hostname -s)" = klogin02 ] && RS_E="ssh -o BatchMode=yes"
 STATE="${GINIPA_ROOT_FILE:-/scratch/paulh/_ginipa_root${PROBE:+_probe}.txt}"   # same path on Vulcan and Killarney
 VPIN="$(vrun "awk -F'\t' '\$1==\"pin_vulcan\"{print \$2}' ${VREPO}/scripts/cluster/ginipa/PIN.conf")"
-MODE="${1:?usage: prep|submit|status|syncback|release}"; shift || true
+MODE="${1:?usage: prep|submit|status|syncback|release|push}"; shift || true
 clean_cmd() { sed -e 's/\\n/\n/g' -e "s/\\\\'//g" "$1"; }
 getv() { printf '%s\n' "$1" | sed -n "s/^ *export $2=//p" | head -1 | tr -d "'"; }
 
@@ -134,6 +134,40 @@ if [ "${MODE}" = release ]; then
   exit 0
 fi
 
+# push [--dry-run] UNIT...: move STARTED Killarney units to Vulcan (Killarney queue stall). Refuses while any job of the unit's chain is still queued /
+# running here (scancel the whole chain first, tail first). Per fold: plans/dataset json + the fold dir (checkpoint_latest/best, logs, debug json;
+# no validation niftis, no wandb) rsynced into the SAME Vulcan run dir, size + md5 of checkpoint_latest/best compared, then the Vulcan marker
+# <fold dir>/.ginipa_moved_from_killarney and the local <unit>/MOVED_TO_VULCAN. On Vulcan next: ginipa.sh move <unit> --from killarney
+# (run table -> vulcan unit MV_<setting>_f<k>), ALLOW_EXISTING=1 ginipa.sh record vulcan MV_..., ginipa.sh submit vulcan MV_... (resume from
+# checkpoint_latest at runtime, same RUN_ID). syncback skips moved units.
+if [ "${MODE}" = push ]; then
+  DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }; [ $# -gt 0 ] || { echo "usage: push [--dry-run] UNIT..."; exit 1; }
+  Q='for f in checkpoint_latest.pth checkpoint_best.pth; do [ -f $f ] && echo $f $(stat -c %s $f) $(md5sum < $f | cut -c1-32); done; true'
+  live="$(squeue -u "${USER}" -h -o %i)"
+  for u in "$@"; do UD="${R}/killarney/${u}"; [ -f "${UD}/JOBS.tsv" ] || { echo "no ${UD}/JOBS.tsv"; exit 1; }
+    for j in $(cut -f3 "${UD}/JOBS.tsv" | tr ',' ' '); do grep -qx "${j}" <<<"${live}" && { echo "REFUSING: ${u} job ${j} still queued/running -- scancel the chain first"; exit 1; }; done
+  done
+  for u in "$@"; do UD="${R}/killarney/${u}"
+    while IFS=$'\t' read -r cmd log name done_; do
+      fd="$(dirname "${done_}")"; vfd="${fd//${KREPO}/${VREPO}}"
+      [ -f "${fd}/checkpoint_latest.pth" ] || { echo "REFUSING: no checkpoint_latest in ${fd}"; exit 1; }
+      ep="$(grep -oE 'Epoch [0-9]+' "$(ls -t "${fd}"/training_log_*.txt | head -1)" | tail -1)"
+      echo "[push] ${u} ${name}: ${fd} -> Vulcan ${vfd} (last logged ${ep})"
+      [ "${DRY}" = 1 ] && continue
+      vrun "mkdir -p ${vfd}"
+      rsync -a -e "${RS_E}" --include='*.json' --exclude='*' "$(dirname "${fd}")/" "vulcan.alliancecan.ca:$(dirname "${vfd}")/" < /dev/null
+      rsync -a -e "${RS_E}" --exclude=wandb/ --exclude='validation/' "${fd}/" "vulcan.alliancecan.ca:${vfd}/" < /dev/null
+      L="$(cd "${fd}" && bash -c "$Q")"; Rm="$(vrun "cd ${vfd} && ${Q}")"
+      [ "$L" = "$Rm" ] && [ -n "$L" ] || { echo "MISMATCH ${name}: Killarney '$L' / Vulcan '$Rm'"; exit 5; }
+      vrun "printf '%s\n' '$(date '+%F %T') moved from Killarney ${fd} (${ep})' '$(echo "$L" | tr '\n' ';')' > ${vfd}/.ginipa_moved_from_killarney"
+      echo "   md5 OK: $(echo "$L" | tr '\n' ' ')"
+    done < "${UD}/index.tsv"
+    [ "${DRY}" = 1 ] || echo "$(date '+%F %T') pushed to Vulcan (chain cancelled)" > "${UD}/MOVED_TO_VULCAN"
+  done
+  [ "${DRY}" = 1 ] || echo "next (Vulcan): for u in $*; do bash scripts/cluster/ginipa/ginipa.sh move \$u --from killarney; done; then ALLOW_EXISTING=1 ginipa.sh record vulcan MV_...; ginipa.sh submit vulcan MV_..."
+  exit 0
+fi
+
 if [ "${MODE}" = status ]; then GINIPA_ROOT_FILE="${STATE}" bash scripts/cluster/ginipa/ginipa.sh status killarney; exit 0; fi
 
 if [ "${MODE}" = syncback ]; then
@@ -145,6 +179,7 @@ if [ "${MODE}" = syncback ]; then
     [ "$(date +%s)" -lt "${t_end}" ] || { log "max lifetime -- exiting"; break; }
     left=0; now=$(date +%s)
     for idx in "${R}"/killarney/*/index.tsv; do
+      [ -f "$(dirname "${idx}")/MOVED_TO_VULCAN" ] && continue   # pushed to Vulcan: trains there now
       while IFS=$'\t' read -r cmd log_ name done_; do
         fd="$(dirname "${done_}")"; [ -f "${cmd%.sh}.SYNCED_TO_VULCAN" ] && continue; left=$((left + 1))
         [ -f "${fd}/checkpoint_final.pth" ] && [ -f "${fd}/checkpoint_best.pth" ] && [ ! -e "${fd}/checkpoint_latest.pth" ] \
