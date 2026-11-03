@@ -1,0 +1,12 @@
+# Low-data texture step, totalseg-pelvic MRI-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_21).
+task: Pelvis MRI-trained (totalseg-pelvic)
+dataset: totalseg-pelvic
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/02_metrics/totalseg_pelvic_model/mri
+ood_contrasts: [ct]
+in_domain: [mri]
+full_data:            # the rung-4.5 / rung-5 runs of the headline ladder (06_11, ladder_flat_rung.yaml)
+  flat: auglab_totalseg-pelvic_mri_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191257
+  texture: auglab_totalseg-pelvic_mri_v26_6_2_train050_val000_20261005_223058
+  n_train: 104
+lowdata_dir: lowdata  # 06_01_evaluate_run.sh with METRICS_SUBDIR=lowdata
+output: lowdata/lowdata_texture_step_summary.md
