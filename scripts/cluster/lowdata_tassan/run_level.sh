@@ -74,8 +74,9 @@ if [[ " ${STEPS} " == *" train "* ]]; then
     EPOCHS_ENV=(); [ "${PROBE:-0}" = 1 ] && EPOCHS_ENV=(NNUNET_NUM_EPOCHS=3)
     pids=()
     for arm in "${todo[@]}"; do
-      rid="RID_${arm}"
-      clean_env FOLD_SLOT_GPU="0,${SLOT},${SLOT} 1,${SLOT},${SLOT} 2,${SLOT},${SLOT}" LAUNCH_WAIT=1 \
+      rid="RID_${arm}"; place=""   # only the folds without checkpoint_final (a rerun does not re-validate finished folds)
+      for f in 0 1 2; do fold_done "${!rid}" "${f}" || place+="${f},${SLOT},${SLOT} "; done
+      clean_env FOLD_SLOT_GPU="${place% }" LAUNCH_WAIT=1 \
         DA_WORKERS="${DA_WORKERS:-3}" ALLOW_METHOD_LOADER_OVERRIDE=1 \
         "${EPOCHS_ENV[@]}" \
         bash "${SC}/04_train/04_35_train_mri_lowdata.sh" "${arm}" "${N}" "${!rid}" \
