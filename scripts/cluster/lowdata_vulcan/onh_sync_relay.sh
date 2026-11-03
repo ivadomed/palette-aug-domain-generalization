@@ -7,7 +7,8 @@
 # TamIA (-> <fold dir>/.lowdata_synced_from_tamia on Vulcan), and once all 6 folds of a setting are on Vulcan submits post_run.sh
 # <setting> on Vulcan (marker /scratch/paulh/lowdata_vulcan/post/<setting>/POST_JOB on Vulcan). Self-contained: run it from a copy
 # (Killarney's checkout is bundle-synced and may not carry this file). One instance (flock); exits when every setting has POST_JOB,
-# on <stage>/STOP_ONH, or after MAX_DAYS (default 8). DRY=1: one pass, prints what it would do.
+# on <stage>/STOP_ONH, or after MAX_DAYS (default 8). DRY=1: one pass, prints what it would do. Each cycle also logs status.sh (Vulcan
+# chaos/pansegdata folds) and tamia_onh.sh status (TamIA Brain folds): epochs logged per fold = the startup record (NO_STATUS=1: off).
 #   start (klogin node holding both masters):
 #     systemd-run --user --scope --unit=lowdata-onh-relay -- nohup bash <copy of this file> >> <stage>/relay.log 2>&1 &
 set -uo pipefail
@@ -66,6 +67,10 @@ while :; do
     else log "${S}: sbatch failed -- retry next cycle"; fi
   done
   log "waiting:${summary:- (none)}"
+  if [ -z "${DRY:-}" ] && [ -z "${NO_STATUS:-}" ]; then   # startup / progress record of every low-data fold (Vulcan + TamIA)
+    log "status (Vulcan):"; V "bash ${VREPO}/scripts/cluster/lowdata_vulcan/status.sh chaos_t1in chaos_t2spir panseg_t1wce panseg_t2w" 2>&1 | sed 's/^/    /'
+    log "status (TamIA):"; T "bash -lc 'bash ${VREPO}/scripts/cluster/lowdata_vulcan/tamia_onh.sh status'" 2>&1 | sed 's/^/    /'
+  fi
   [ -z "${DRY:-}" ] || { log "dry pass done"; break; }
   [ "${left}" -gt 0 ] || { log "every setting has a controller -- exiting"; break; }
   sleep "${POLL_S}"
