@@ -4,8 +4,9 @@ shared drivers, in the standard benchmark/ layout: for both models the run dir's
 3d_fullres/{dataset.json, plans.json, dataset_fingerprint.json, fold_{0,1,2}/checkpoint_best.pth}; every OOD item's
 <input>_texrm dir (a symlink on Vulcan: pull with rsync -L), its original <input> dir (re-predicted on the same
 machine) and the dataset.json of its raw dataset dir when it has one; Brain: the native reference images the on-harmony predict hook resamples to (_test_set/<item>/images_native).
-Writes <work_root>/stage/<task>.files, used as:
-  rsync -rlptL --files-from=:<that file> vulcan.alliancecan.ca:/project/aip-jcohen/paulh/mri_synthesis_project/ <repo>/
+Writes <work_root>/stage/<task>.files (entries) and <task>.sizes (one file per line with its size), used by
+transfer.sh pull <task> on the other machine (or by hand:
+  rsync -rlptL --files-from=:<task>.files vulcan.alliancecan.ca:/project/aip-jcohen/paulh/mri_synthesis_project/ <repo>/)
 
   python stage_list.py <task> [<task> ...]
 """
@@ -54,7 +55,15 @@ def main():
         rel = sorted({str(p.relative_to(REPO)) for p in paths})
         f = out_dir / f"{task}.files"
         f.write_text("\n".join(rel) + "\n")
-        print(f"[stage] {task}: {len(rel)} entries, {size / 1e9:.2f} GB -> {f}")
+        # one line per FILE, "<bytes>\t<path>" (dirs expanded): transfer.sh balances its parallel chunks by size
+        files = {}
+        for r in rel:
+            q = REPO / r
+            for x in (sorted(q.iterdir()) if q.is_dir() else [q]):
+                if x.is_file():
+                    files[str(q.relative_to(REPO) / x.name) if q.is_dir() else r] = x.stat().st_size
+        (out_dir / f"{task}.sizes").write_text("".join(f"{n}\t{k}\n" for k, n in sorted(files.items())))
+        print(f"[stage] {task}: {len(rel)} entries, {len(files)} files, {size / 1e9:.2f} GB -> {f} (+ .sizes)")
 
 
 if __name__ == "__main__":
