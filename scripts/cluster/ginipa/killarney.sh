@@ -7,6 +7,9 @@
 #                                                              #   pin = PIN.conf + disk, config md5, preprocessed md5 vs Vulcan)
 #   bash scripts/cluster/ginipa/killarney.sh submit [--dry-run] [UNIT...]   # chained guarded segments per fold (same body as ginipa.sh)
 #   bash scripts/cluster/ginipa/killarney.sh status
+#   bash scripts/cluster/ginipa/killarney.sh release [--dry-run] UNIT...   # hand a NEVER-STARTED unit back to Vulcan (after scancel of its whole
+#     chain): refuses unless every job is CANCELLED, no seg_*.out, no fold dir; moves the Killarney unit dir to <root>/_superseded_retarget/
+#     and writes <root>/killarney/<UNIT>/RELEASED_FROM_KILLARNEY on Vulcan; then on Vulcan: ginipa.sh retarget <UNIT> (see there)
 #   ssh klogin02 'systemd-run --user --scope --unit=ginipa-ksync -- nohup bash <repo>/scripts/cluster/ginipa/killarney.sh syncback >> <log> 2>&1 &'
 #     syncback (klogin02: needs its Vulcan master): every 30 min each finished fold dir (final + best, latest gone, final > 10 min) is
 #     rsynced (--delete, that fold dir only) into the SAME Vulcan run dir, md5-verified, and marked on Vulcan with
@@ -23,7 +26,7 @@ vrun() { if [ "$(hostname -s)" = klogin02 ]; then ssh -n -o BatchMode=yes vulcan
 RS_E="ssh klogin02 ssh -o BatchMode=yes"; [ "$(hostname -s)" = klogin02 ] && RS_E="ssh -o BatchMode=yes"
 STATE="${GINIPA_ROOT_FILE:-/scratch/paulh/_ginipa_root${PROBE:+_probe}.txt}"   # same path on Vulcan and Killarney
 VPIN="$(vrun "awk -F'\t' '\$1==\"pin_vulcan\"{print \$2}' ${VREPO}/scripts/cluster/ginipa/PIN.conf")"
-MODE="${1:?usage: prep|submit|status|syncback}"; shift || true
+MODE="${1:?usage: prep|submit|status|syncback|release}"; shift || true
 clean_cmd() { sed -e 's/\\n/\n/g' -e "s/\\\\'//g" "$1"; }
 getv() { printf '%s\n' "$1" | sed -n "s/^ *export $2=//p" | head -1 | tr -d "'"; }
 
@@ -100,6 +103,34 @@ if [ "${MODE}" = submit ]; then
     [ "${DRY}" = 1 ] || printf '%s\tkillarney\t%s\t%s\n' "${u}" "${jobs_}" "$(date '+%F %T')" | tee -a "${UD}/JOBS.tsv" >> "${R}/JOBS_ALL_killarney.tsv"
     echo "[submit] killarney/${u}: ${nseg} x ${st}: ${jobs_}"
   done
+  exit 0
+fi
+
+if [ "${MODE}" = release ]; then
+  DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
+  [ $# -gt 0 ] || { echo "usage: release [--dry-run] UNIT..."; exit 1; }
+  SUP="${R}/_superseded_retarget"; declare -A ST
+  for u in "$@"; do UD="${R}/killarney/${u}"
+    [ -f "${UD}/JOBS.tsv" ] && [ -f "${UD}/index.tsv" ] || { echo "REFUSING: no ${UD}/JOBS.tsv + index.tsv"; exit 1; }
+    [ ! -e "${SUP}/${u}" ] || { echo "REFUSING: ${SUP}/${u} exists"; exit 1; }
+    sts=""
+    for j in $(cut -f3 "${UD}/JOBS.tsv" | tr ',' ' '); do
+      st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"; [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: ${u} job ${j} is ${st:-unknown} (scancel the whole chain first)"; exit 1; }
+      sts="${sts} ${j}:${st}"; done
+    if ls "${UD}"/seg_*.out >/dev/null 2>&1; then echo "REFUSING: ${u} has segment output (a segment ran): $(ls "${UD}"/seg_*.out | tr '\n' ' ')"; exit 1; fi
+    while IFS=$'\t' read -r cmd log name done_; do
+      res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"; [ -n "${res}" ] || { echo "REFUSING: ${u} ${name}: no nnUNet_results in ${cmd}"; exit 1; }
+      if ls -d "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1; then echo "REFUSING: ${u} ${name} has a fold dir under ${res} (it started)"; exit 1; fi
+    done < "${UD}/index.tsv"
+    ST[${u}]="${sts# }"; echo "[release] ${u}: chain cancelled (${sts# }), no segment output, no fold dir -- never started"
+  done
+  [ "${DRY}" = 0 ] || { echo "[dry] would move each unit dir to ${SUP}/ and write ${R}/killarney/<unit>/RELEASED_FROM_KILLARNEY on Vulcan"; exit 0; }
+  for u in "$@"; do
+    msg="$(date '+%F %T') released never-started Killarney unit ${u} (jobs ${ST[${u}]}) from $(hostname -s)"
+    vrun "test -d ${R}/killarney/${u} && printf '%s\n' '${msg}' > ${R}/killarney/${u}/RELEASED_FROM_KILLARNEY" || { echo "could not write the Vulcan marker for ${u} -- nothing moved for it"; exit 1; }
+    mkdir -p "${SUP}"; mv "${R}/killarney/${u}" "${SUP}/${u}"; echo "${msg}" | tee -a "${R}/LAUNCH_INFO"
+  done
+  echo "next (Vulcan): bash scripts/cluster/ginipa/ginipa.sh retarget <UNIT> --dry-run, then without --dry-run, then ginipa.sh submit vulcan V_..."
   exit 0
 fi
 

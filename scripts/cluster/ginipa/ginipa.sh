@@ -14,6 +14,7 @@
 #   bash scripts/cluster/ginipa/ginipa.sh submit <cluster> [--dry-run] [UNIT...]   # vulcan|tamia here; killarney: killarney.sh submit
 #   bash scripts/cluster/ginipa/ginipa.sh move <TamIA unit> [--dry-run]   # Vulcan: TamIA stall -> resume that unit's folds on Vulcan L40S
 #   bash scripts/cluster/ginipa/ginipa.sh mirror tamia            # Vulcan: copy the run table to TamIA's arm root
+#   bash scripts/cluster/ginipa/ginipa.sh retarget <V_unit|K_unit> [--dry-run]   # Vulcan: never-started unit Vulcan <-> Killarney
 #   bash scripts/cluster/ginipa/ginipa.sh status [cluster]       # epoch, median s/epoch, peak VRAM, final, per recorded fold
 #   bash scripts/cluster/ginipa/ginipa.sh shims check|install    # the 9 additive <DS>GinIpaTrainers.py shims in this cluster's venv
 # PROBE=1: probe root + plan_probe.conf, throwaway results base <scratch>/_ginipa_probe, every segment = `timeout PROBE_SECONDS`
@@ -403,23 +404,67 @@ if [ "${MODE}" = move ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------------------------- retarget
-# Re-target a Vulcan unit that NEVER STARTED to Killarney (Vulcan queue too slow): refuses unless every job of its chain is CANCELLED
-# (scancel them first) and no fold dir exists; the run table rows become cluster killarney, unit K_<rest> (same RUN_IDs, same folds);
-# the old unit dir moves to <root>/_superseded_retarget/. Then: ginipa.sh record killarney K_...; on Killarney killarney.sh prep K_...;
-# killarney.sh submit K_...  (the datasets must be staged on Killarney).
+# retarget <V_unit> [--dry-run]: re-target a Vulcan unit that NEVER STARTED to Killarney (Vulcan queue too slow): refuses unless every job
+# of its chain is CANCELLED (scancel them first) and no fold dir exists; the run table rows become cluster killarney, unit K_<rest> (same
+# RUN_IDs, same folds); the old unit dir moves to <root>/_superseded_retarget/. Then: ginipa.sh record killarney K_...; on Killarney
+# killarney.sh prep K_...; killarney.sh submit K_...  (the datasets must be staged on Killarney).
+# retarget <K_unit> [--dry-run]: the INVERSE, for a retargeted unit that never started on Killarney (Killarney queue too slow). Order:
+#   1. Killarney: scancel the unit's whole chain (one scancel call);  2. Killarney: killarney.sh release [--dry-run] K_...  (refuses unless
+#   every job is CANCELLED, no seg_*.out, no fold dir; moves its Killarney unit dir aside and writes <root>/killarney/K_.../RELEASED_FROM_KILLARNEY
+#   on Vulcan);  3. Vulcan: ginipa.sh retarget K_... [--dry-run]: needs that marker and the superseded, VERIFY_PASSED Vulcan unit V_<rest>
+#   (every job CANCELLED), re-verifies its recorded fold commands (verify_cmd: pin, config md5, trainer, epochs, results dir, ...), refuses
+#   if a fold dir exists on Vulcan; then the run table rows go back to cluster vulcan, unit V_<rest>, GPU 0 (backup kept), the V_ dir moves
+#   back from _superseded_retarget/ (its cancelled JOBS.tsv kept as JOBS.tsv.cancelled_<ts>) and the Vulcan K_ dir moves to
+#   _superseded_retarget/;  4. ginipa.sh submit vulcan [--dry-run] V_...   (same RUN_ID, same verified fold command; post_poller.sh reads the
+#   run table, so the fold is a vulcan fold again).
 if [ "${MODE}" = retarget ]; then
   [ "${GINIPA_CLUSTER}" = vulcan ] || { echo "retarget runs on Vulcan"; exit 1; }
-  U="${1:?retarget <vulcan unit>}"; UD="${R}/vulcan/${U}"; [ -f "${UD}/JOBS.tsv" ] || { echo "no ${UD}/JOBS.tsv"; exit 1; }
-  for j in $(cut -f3 "${UD}/JOBS.tsv" | tr ',' ' '); do
-    st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"; [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: job ${j} is ${st:-unknown} (scancel the whole chain first)"; exit 1; }
-  done
+  U="${1:?retarget <vulcan unit V_...|killarney unit K_...> [--dry-run]}"; DRY=0; [ "${2:-}" = --dry-run ] && DRY=1
+  SUP="${R}/_superseded_retarget"; stamp="$(date +%Y%m%d_%H%M%S)"
+  all_cancelled() {   # $1 JOBS.tsv: every job of every chain listed in it must be CANCELLED
+    local j st; for j in $(cut -f3 "$1" | tr ',' ' '); do
+      st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"; [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: job ${j} is ${st:-unknown} (scancel the whole chain first)"; return 1; }
+    done; }
+  if [[ "${U}" == K_* ]]; then   # ---- inverse: Killarney -> Vulcan
+    KD="${R}/killarney/${U}"; VU="V_${U#K_}"; SD="${SUP}/${VU}"; UD="${R}/vulcan/${VU}"
+    [ -d "${KD}" ] || { echo "no ${KD}"; exit 1; }
+    [ -f "${KD}/RELEASED_FROM_KILLARNEY" ] || { echo "REFUSING: ${U} not released (Killarney: scancel its chain, then killarney.sh release ${U})"; exit 1; }
+    [ -f "${SD}/VERIFY_PASSED" ] && [ -f "${SD}/index.tsv" ] && [ -f "${SD}/JOBS.tsv" ] || { echo "REFUSING: no verified superseded Vulcan unit ${SD}"; exit 1; }
+    [ ! -e "${UD}" ] || { echo "REFUSING: ${UD} exists"; exit 1; }
+    [ ! -e "${SUP}/${U}" ] || { echo "REFUSING: ${SUP}/${U} exists"; exit 1; }
+    [ -n "$(rows_of killarney "${U}")" ] || { echo "REFUSING: no run table rows for killarney unit ${U}"; exit 1; }
+    all_cancelled "${SD}/JOBS.tsv" || exit 1
+    echo "[retarget] ${U}: released on Killarney: $(head -1 "${KD}/RELEASED_FROM_KILLARNEY")"
+    bad=0; n=0
+    while IFS=$'\t' read -r cmd log name done_; do
+      c="${SD}/$(basename "${cmd}")"; [ "$(dirname "${cmd}")" = "${UD}" ] && [ -f "${c}" ] || { echo "REFUSING: ${name}: cmd ${cmd} not in ${UD} / ${c} missing"; exit 1; }
+      row="$(awk -F'\t' -v r="${name#fold?_}" -v f="${name:4:1}" -v u="${U}" 'NR>1 && $16==r && $2==f && $8=="killarney" && $9==u' "${RT}")"
+      [ -n "${row}" ] || { echo "REFUSING: ${name} is not a run table row of killarney unit ${U}"; exit 1; }
+      res="$(getv "$(clean_cmd "${c}")" nnUNet_results)"
+      if ls -d "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1; then echo "REFUSING: ${name} has a fold dir under ${res} on Vulcan"; exit 1; fi
+      verify_cmd "${c}" "${row}" vulcan "${GINIPA_PIN}" "${REPO}" || bad=1; n=$((n+1))
+    done < "${SD}/index.tsv"
+    [ "${n}" = "$(rows_of killarney "${U}" | grep -c .)" ] || { echo "REFUSING: ${SD}: ${n} folds != run table rows of ${U}"; exit 1; }
+    [ "${bad}" = 0 ] || { echo "REFUSING: re-verify of ${SD} failed (ALLOW_EXISTING=1 only if the run dir exists because of OTHER folds)"; exit 1; }
+    if [ "${DRY}" = 1 ]; then echo "[dry] would: run table killarney/${U} -> vulcan/${VU}; mv ${SD} -> ${UD} (JOBS.tsv -> JOBS.tsv.cancelled_${stamp}); mv ${KD} -> ${SUP}/${U}"; exit 0; fi
+    cp "${RT}" "${RT}.bak_retarget_${U}_${stamp}"
+    awk -F'\t' -v OFS='\t' -v u="${U}" -v nu="${VU}" 'NR>1 && $8=="killarney" && $9==u {$8="vulcan"; $9=nu; $10=0} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
+    mv "${SD}" "${UD}"; mv "${UD}/JOBS.tsv" "${UD}/JOBS.tsv.cancelled_${stamp}"; mv "${KD}" "${SUP}/${U}"
+    echo "$(date '+%F %T') retargeted never-started Killarney unit ${U} (chain cancelled, released) -> Vulcan unit ${VU} (restored, re-verified)" | tee -a "${R}/LAUNCH_INFO" "${R}/_launch/LAUNCH_LOG.txt"
+    echo "next: bash scripts/cluster/ginipa/ginipa.sh submit vulcan --dry-run ${VU} && bash scripts/cluster/ginipa/ginipa.sh submit vulcan ${VU}"
+    exit 0
+  fi
+  UD="${R}/vulcan/${U}"; [ -f "${UD}/JOBS.tsv" ] || { echo "no ${UD}/JOBS.tsv"; exit 1; }
+  all_cancelled "${UD}/JOBS.tsv" || exit 1
   while IFS=$'\t' read -r cmd log name done_; do
     res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"
     if ls -d "${res}"/Dataset*/*/fold_"${name:4:1}" >/dev/null 2>&1; then echo "REFUSING: ${name} has a fold dir under ${res} (it started)"; exit 1; fi
   done < "${UD}/index.tsv"
-  NU="K_${U#V_}"; cp "${RT}" "${RT}.bak_retarget_${U}_$(date +%Y%m%d_%H%M%S)"
+  NU="K_${U#V_}"; [ ! -e "${SUP}/${U}" ] || { echo "REFUSING: ${SUP}/${U} exists"; exit 1; }
+  if [ "${DRY}" = 1 ]; then echo "[dry] would: run table vulcan/${U} -> killarney/${NU}; mv ${UD} -> ${SUP}/${U}"; exit 0; fi
+  cp "${RT}" "${RT}.bak_retarget_${U}_${stamp}"
   awk -F'\t' -v OFS='\t' -v u="${U}" -v nu="${NU}" 'NR>1 && $8=="vulcan" && $9==u {$8="killarney"; $9=nu} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
-  mkdir -p "${R}/_superseded_retarget"; mv "${UD}" "${R}/_superseded_retarget/${U}"
+  mkdir -p "${SUP}"; mv "${UD}" "${SUP}/${U}"
   echo "$(date '+%F %T') retargeted never-started Vulcan unit ${U} (chain cancelled) -> Killarney unit ${NU}" | tee -a "${R}/LAUNCH_INFO" "${R}/_launch/LAUNCH_LOG.txt"
   echo "next: bash scripts/cluster/ginipa/ginipa.sh record killarney ${NU}; Killarney: killarney.sh prep ${NU} && killarney.sh submit ${NU}"
   exit 0
@@ -427,16 +472,17 @@ fi
 
 # ------------------------------------------------------------------------------------------------------------------ status
 if [ "${MODE}" = status ]; then
-  for idx in "${R}"/${1:-*}/*/index.tsv; do
-    [ -f "${idx}" ] || continue; UD="$(dirname "${idx}")"; echo "-- ${UD#${R}/} $(cut -f3 "${UD}/JOBS.tsv" 2>/dev/null | tr '\n' ' ')"
+  for idx in "${R}"/${1:-*}/*/index.tsv; do   # skips _superseded_retarget/ (and any other _* dir) unless named explicitly
+    [ -f "${idx}" ] || continue; UD="$(dirname "${idx}")"; [ -n "${1:-}" ] || [[ "${UD#${R}/}" != _* ]] || continue; echo "-- ${UD#${R}/} $(cut -f3 "${UD}/JOBS.tsv" 2>/dev/null | tr '\n' ' ')"
     i=0; read -ra G <<<"$(cat "${UD}/GPU_MAP" 2>/dev/null || echo)"
     while IFS=$'\t' read -r cmd log name done_; do
-      res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"; f="${name:4:1}"
+      f="${name:4:1}"; [ -f "${cmd}" ] || { printf '   %-70s cmd missing (%s)\n' "${name#fold?_}_f${f}" "${cmd}"; i=$((i+1)); continue; }
+      res="$(getv "$(clean_cmd "${cmd}")" nnUNet_results)"
       L="$(ls -t "${res}"/Dataset*/*/fold_${f}/training_log_*.txt 2>/dev/null | head -1 || true)"
       ts=$(grep -o "Epoch time: [0-9.]* s" "${L}" 2>/dev/null | awk '{print $3}' | tail -n +3 | sort -n || true)
       med=$(echo "${ts}" | awk 'NF{a[++n]=$1} END{if(n) print a[int((n+1)/2)]; else print "NA"}'); nep=$(echo "${ts}" | grep -c . || true)
       last=$(grep -oE "Epoch [0-9]+" "${L}" 2>/dev/null | tail -1 | grep -oE '[0-9]+$' || true)
-      g="${G[$i]:-?}"; vr=$(cat "${UD}"/vram_*.csv 2>/dev/null | awk -F', ' -v g="${g}" '$2+0==g+0 {v=$3; gsub(/ MiB/,"",v); if (v+0>m+0) m=v+0} END{print m+0}')
+      g="${G[$i]:-?}"; vr=$(cat "${UD}"/vram_*.csv 2>/dev/null | awk -F', ' -v g="${g}" '$2+0==g+0 {v=$3; gsub(/ MiB/,"",v); if (v+0>m+0) m=v+0} END{print m+0}' || true)
       printf '   %-70s GPU%s epoch=%-5s med_s/ep=%-7s (n=%s) peakVRAM=%sMiB final=%s\n' "${name#fold?_}_f${f}" "${g}" "${last:-NA}" "${med}" "${nep}" "${vr}" \
         "$([ -f "${done_}" ] && echo yes || echo no)"
       i=$((i+1))
