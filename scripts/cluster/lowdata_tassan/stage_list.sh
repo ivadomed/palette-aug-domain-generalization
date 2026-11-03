@@ -10,9 +10,43 @@
 # CT-trained direction: LOWDATA_CONTRAST=ct bash stage_list.sh -> PelvisCT.{files,sizes,ready}, same contents with the CT
 # side (preprocessed Dataset130, raw Dataset130 dataset.json + both test-image dirs, CT split files, the two CT full-data
 # runs' used configs); on tassan: ... transfer.sh pull PelvisCT
+# pansegdata (training only on tassan, run_panseg.sh): LOWDATA_TASK=panseg bash stage_list.sh -> Pancreas.{files,sizes,ready}:
+# preprocessed Dataset150 + Dataset151 (3d_fullres + plans, fingerprint, dataset.json, splits, gt_segmentations), both raw
+# dataset.json, 4_splits_pansegdata/{splits_final,test_cases}.json, the four full-data rung-4.5 / rung-5 runs' used configs and
+# the Vulcan low-data run table (RUN_IDs + job ids; gitignored, so it travels here). No test images (prediction runs on Vulcan).
+#   on tassan: ... transfer.sh pull Pancreas
 set -euo pipefail
 REPO=/project/aip-jcohen/paulh/mri_synthesis_project
 VSTAGE="${VSTAGE:-/scratch/paulh/lowdata_tassan}"
+write_list() {   # $1 list name, rest: entries -> <VSTAGE>/<name>.{files,sizes}
+  local L="$1"; shift
+  printf '%s\n' "$@" > "${VSTAGE}/${L}.files"; : > "${VSTAGE}/${L}.sizes.tmp"
+  for e in "$@"; do
+    [ -e "${e}" ] || { echo "ERROR: missing ${e}" >&2; exit 1; }
+    find -L "${e}" -type f -printf '%s\t%p\n' >> "${VSTAGE}/${L}.sizes.tmp"
+  done
+  sort -k2 "${VSTAGE}/${L}.sizes.tmp" > "${VSTAGE}/${L}.sizes"; rm "${VSTAGE}/${L}.sizes.tmp"
+}
+if [ "${LOWDATA_TASK:-pelvis}" = panseg ]; then
+  D=benchmark/02_tasks/pancreas_disease/pansegdata
+  mkdir -p "${VSTAGE}"; cd "${REPO}"
+  entries=("${D}/4_splits_pansegdata/splits_final.json" "${D}/4_splits_pansegdata/test_cases.json"
+           "${D}/8_results_pansegdata/_launch/RUN_IDS_lowdata_vulcan.tsv")
+  for DS in Dataset150_PanSegData_T1WCE Dataset151_PanSegData_T2W; do
+    P="${D}/2_nnUNet_pansegdata/preprocessed/${DS}"
+    entries+=("${P}/dataset.json" "${P}/dataset_fingerprint.json" "${P}/nnUNetPlans.json" "${P}/splits_final.json"
+              "${P}/gt_segmentations" "${P}/nnUNetPlans_3d_fullres" "${D}/2_nnUNet_pansegdata/raw/${DS}/dataset.json")
+  done
+  for r in t1wce/auglab/pansegdata_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080433 \
+           t1wce/auglab/pansegdata_t1wce_v26_6_2_train050_val000_20261005_223237 \
+           t2w/auglab/pansegdata_t2w_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080507 \
+           t2w/auglab/pansegdata_t2w_v26_6_2_train050_val000_20261005_223311; do
+    entries+=("$(ls -d "${D}/8_results_pansegdata/01_predictions/pansegdata_model/${r}"/Dataset*/nnUNetTrainerPANSEGDATAAugLabDefault__nnUNetPlans__3d_fullres/fold_0/transform_params_gpu_used_for_training.json)")
+  done
+  write_list Pancreas "${entries[@]}"
+  echo "main $(git rev-parse --short HEAD); $(wc -l < "${VSTAGE}/Pancreas.sizes") files, $(awk -F'\t' '{s+=$1} END {printf "%.2f", s/1e9}' "${VSTAGE}/Pancreas.sizes") GB; $(date -u +%FT%TZ)" > "${VSTAGE}/Pancreas.ready"
+  cat "${VSTAGE}/Pancreas.ready"; exit 0
+fi
 C="${LOWDATA_CONTRAST:-mri}"
 case "${C}" in
   mri) DSNAME=Dataset131_TotalsegPelvic_MRI; LIST=Pelvis
