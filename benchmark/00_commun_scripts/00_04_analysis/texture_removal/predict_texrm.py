@@ -70,7 +70,7 @@ GROUPS = {
     "Abdomen": [(f"{T}/abdomen_healthy/chaos/5_scripts_chaos", "env.sh", "05_01_predict_common.sh", "t1out t2spir ct",
                  "", SUF, SUB),
                 # crop-before-predict crops (test item <item>_fovcrop, the inputs of the ladder's fov_crop predictions)
-                (f"{T}/abdomen_healthy/amos/5_scripts_amos", "env.sh", "05_01_predict_common.sh", "ct mri", "",
+                (f"{T}/abdomen_healthy/amos/5_scripts_amos", "env.sh", "05_01_predict_chaos_common.sh", "ct mri", "",
                  "_fovcrop" + SUF, SUB),
                 (f"{T}/abdomen_healthy/sliver07/5_scripts_sliver07", "env.sh", "05_01_predict_common.sh", "ct", "",
                  "_fovcrop" + SUF, SUB)],
