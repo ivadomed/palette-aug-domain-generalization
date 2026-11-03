@@ -27,9 +27,19 @@ run_job() {
         return 1
     fi
 
+    # Opt-in, for hosts whose set_slot does not pin GPUs and has fewer slots than a driver's fold fan-out
+    # (tassan, set by scripts/cluster/tassan_env.sh; unset = unchanged behaviour):
+    #   RUN_JOB_SET_SLOT_NSLOTS=N          a numeric --slot S runs on slot S % N (predict_common.sh "all": fold 2 -> 0)
+    #   RUN_JOB_SET_SLOT_CUDA_FROM_SLOT=1  the command runs as `env CUDA_VISIBLE_DEVICES=<slot> ...`
+    if [ -n "${RUN_JOB_SET_SLOT_NSLOTS:-}" ] && [[ "${slot}" =~ ^[0-9]+$ ]]; then
+        slot=$(( slot % RUN_JOB_SET_SLOT_NSLOTS ))
+    fi
+    local _pre=()
+    [ "${RUN_JOB_SET_SLOT_CUDA_FROM_SLOT:-0}" = "1" ] && _pre=(env "CUDA_VISIBLE_DEVICES=${slot}")
+
     if [ -n "${log}" ]; then
-        set_slot ${slot} "$@" > "${log}" 2>&1
+        set_slot ${slot} "${_pre[@]}" "$@" > "${log}" 2>&1
     else
-        set_slot ${slot} "$@"
+        set_slot ${slot} "${_pre[@]}" "$@"
     fi
 }

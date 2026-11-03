@@ -118,6 +118,9 @@ predict_fold() {
     # would silently override it and collapse every packed fold onto device 0. Omit it,
     # matching train_common.sh's same pack-mode guard.
     [ -n "${RUN_JOB_PACK_DIR:-}" ] && _cuda_line=""
+    # set_slot backend with RUN_JOB_SET_SLOT_CUDA_FROM_SLOT=1 (tassan, scripts/cluster/tassan_env.sh): the backend pins
+    # the slot's GPU; an inner export of the fold index (GPU=F) would override it with a device that may not exist.
+    [ "${RUN_JOB_SET_SLOT_CUDA_FROM_SLOT:-0}" = "1" ] && [ "${RUN_JOB_BACKEND:-}" = "set_slot" ] && _cuda_line=""
 
     echo "[$(date '+%H:%M:%S')] predict ${METHOD} | run=${RUN_ID} | fold=${F} | ckpt=${CHECKPOINT} | slot=${SLOT} gpu=${GPU}"
 
