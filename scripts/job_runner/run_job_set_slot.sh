@@ -31,11 +31,27 @@ run_job() {
     # (tassan, set by scripts/cluster/tassan_env.sh; unset = unchanged behaviour):
     #   RUN_JOB_SET_SLOT_NSLOTS=N          a numeric --slot S runs on slot S % N (predict_common.sh "all": fold 2 -> 0)
     #   RUN_JOB_SET_SLOT_CUDA_FROM_SLOT=1  the command runs as `env CUDA_VISIBLE_DEVICES=<slot> ...`
+    #   RUN_JOB_SET_SLOT_FORWARD_ENV=1     for a set_slot that starts the unit with an empty environment (tassan:
+    #                                      systemd-run): every exported variable of this shell is passed as
+    #                                      `env NAME=VALUE ...` (minus session/systemd-specific ones)
     if [ -n "${RUN_JOB_SET_SLOT_NSLOTS:-}" ] && [[ "${slot}" =~ ^[0-9]+$ ]]; then
         slot=$(( slot % RUN_JOB_SET_SLOT_NSLOTS ))
     fi
-    local _pre=()
-    [ "${RUN_JOB_SET_SLOT_CUDA_FROM_SLOT:-0}" = "1" ] && _pre=(env "CUDA_VISIBLE_DEVICES=${slot}")
+    local _pre=() _v
+    if [ "${RUN_JOB_SET_SLOT_FORWARD_ENV:-0}" = "1" ]; then
+        _pre=(env)
+        for _v in $(compgen -e); do
+            case "${_v}" in
+                _|PWD|OLDPWD|SHLVL|INVOCATION_ID|JOURNAL_STREAM|NOTIFY_SOCKET|MANAGERPID|LISTEN_*|SYSTEMD_*|DBUS_*|\
+                SSH_*|TMUX*|STY|WINDOW|TERM_SESSION_ID|CUDA_VISIBLE_DEVICES) continue ;;
+            esac
+            _pre+=("${_v}=${!_v}")
+        done
+    fi
+    if [ "${RUN_JOB_SET_SLOT_CUDA_FROM_SLOT:-0}" = "1" ]; then
+        [ ${#_pre[@]} -eq 0 ] && _pre=(env)
+        _pre+=("CUDA_VISIBLE_DEVICES=${slot}")
+    fi
 
     if [ -n "${log}" ]; then
         set_slot ${slot} "${_pre[@]}" "$@" > "${log}" 2>&1
