@@ -182,8 +182,9 @@ for u in "${UL[@]}"; do read -r s arm f g <<< "${u}"; tc="${s#panseg_}"; rid="${
   fd="$(fold_dir "${tc}" "${rid}" "${f}")"; vfd="${VREPO}/${fd}"
   [ -f "${fd}/checkpoint_final.pth" ] || fail push "${rid} fold ${f}: no checkpoint_final.pth"
   if ssh "${VULCAN}" "test -e ${vfd}/.lowdata_synced_from_tassan"; then SET_DONE[${s}]+="${arm}${f} "; continue; fi
-  ssh "${VULCAN}" "ls ${vfd}/training_log_* >/dev/null 2>&1" && fail push "${vfd} on Vulcan already has a training log (Vulcan trained this fold too?): resolve by hand"
-  ssh "${VULCAN}" "mkdir -p ${vfd}" || fail push "mkdir ${vfd}"
+  ssh "${VULCAN}" "ls ${vfd}/training_log_* >/dev/null 2>&1 && [ ! -e ${vfd}/.lowdata_pushing_from_tassan ]" \
+    && fail push "${vfd} on Vulcan already has a training log not pushed from tassan (Vulcan trained this fold too?): resolve by hand"
+  ssh "${VULCAN}" "mkdir -p ${vfd} && touch ${vfd}/.lowdata_pushing_from_tassan" || fail push "mkdir ${vfd}"
   rsync -rlpt --include='*.json' --exclude='*' "$(dirname "${fd}")/" "${VULCAN}:$(dirname "${vfd}")/" || fail push "rsync json ${rid}"
   rsync -rlpt --partial --exclude=wandb/ --exclude='validation/*.nii.gz' --exclude='validation/*.npz' --exclude=checkpoint_latest.pth \
     "${fd}/" "${VULCAN}:${vfd}/" || fail push "rsync ${rid} fold ${f}"
