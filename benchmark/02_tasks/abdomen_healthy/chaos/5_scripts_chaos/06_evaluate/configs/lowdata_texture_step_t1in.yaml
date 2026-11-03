@@ -1,0 +1,20 @@
+# Low-data texture step, chaos T1in-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_38 t1in).
+# Grouped held-out pool = the T1in ladder's (06_34_ladder_summary_t1in.py): own t1out / t2spir / ct + amos and sliver07 fov_crop.
+task: Abdomen T1-in-trained (chaos)
+dataset: chaos
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/abdomen_healthy/chaos/8_results_chaos/02_metrics/chaos_model/t1in
+in_domain: [t1in]
+extra_ood_sources:
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/abdomen_healthy/amos/8_results_amos/02_metrics/chaos_model/t1in/fov_crop
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/abdomen_healthy/sliver07/8_results_sliver07/02_metrics/chaos_model/t1in/fov_crop
+ood_groups:
+  t1out: [t1out]
+  t2spir: [t2spir]
+  ct: [ct, amos/ct, sliver07/ct]
+  t2w: [amos/mri]
+full_data:            # the rung-4.5 / rung-5 runs of the T1in ladder (06_34, ladder_flat_rung.yaml)
+  flat: nnUNet_chaos_t1in_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill_20261008_190938
+  texture: nnUNet_chaos_t1in_v26_6_2_train050_val000_20260715_082040
+  n_train: 12
+lowdata_dir: lowdata  # 06_01_evaluate_run.sh with METRICS_SUBDIR=lowdata; fov_crop RUNS_FILE subdir lowdata
+output: lowdata/lowdata_texture_step_summary.md

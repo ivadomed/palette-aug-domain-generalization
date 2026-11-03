@@ -5,7 +5,8 @@
 # 06_01_evaluate_run.sh sources env.sh, sets the vars below, then sources this with its own "$@".
 #   bash 06_01_evaluate_run.sh <RUN_ID> <CATEGORY:nnUNet|auglab> <SOURCE_TRAINING_CONTRAST> [FOLD=all]       (LADDER=1 -> .../ablations/<item>/...)
 # Shim must set: SOURCE_PREFIX (e.g. ISPY2: needs ${SOURCE_PREFIX}_MODEL_TYPE and _DATASET_JSON), EVAL_ITEMS, EVAL_LABELS, EVAL_JOB_PREFIX.
-# Optional env: CKPT_TAG (best|final), EVAL_INLINE=1, EVAL_TIME, EVAL_MEM, EVAL_FOLDS (default "0 1 2").
+# Optional env: CKPT_TAG (best|final), EVAL_INLINE=1, EVAL_TIME, EVAL_MEM, EVAL_FOLDS (default "0 1 2"),
+#   METRICS_SUBDIR (e.g. lowdata -> .../<src training contrast>/lowdata/<item>/<CATEGORY>_<RUN_ID>; not combinable with LADDER=1).
 # Same safety nets as evaluate_run_common.sh: missing prediction dir = ERROR, #preds != #GT = ERROR, stale item CSV deleted first, eval_all.csv rows asserted.
 set -euo pipefail
 cd "${PROJECT_ROOT:?source env.sh first}"
@@ -16,6 +17,10 @@ _src() { local n="${SOURCE_PREFIX}_$1"; echo "${!n}"; }
 SRC_MT="$(_src MODEL_TYPE)"; DJ="$(_src DATASET_JSON)"; [ -f "${DJ}" ] || { echo "ERROR: source dataset.json not found: ${DJ}" >&2; exit 1; }
 CKPT_TAG="${CKPT_TAG:-best}"; _PRED_SUBDIR=""; _OUT_SUFFIX=""; [ "${CKPT_TAG}" != "best" ] && { _PRED_SUBDIR="${CKPT_TAG}/"; _OUT_SUFFIX="_${CKPT_TAG}"; }
 _ABL=""; [ "${LADDER:-0}" = "1" ] && _ABL="ablations/"
+if [ -n "${METRICS_SUBDIR:-}" ]; then
+    [ -z "${_ABL}" ] || { echo "ERROR: METRICS_SUBDIR and LADDER=1 are exclusive" >&2; exit 1; }
+    _ABL="${METRICS_SUBDIR%/}/"
+fi
 PRED_BASE="${PREDICTIONS_ROOT}/${SRC_MT}/${TC}/${CATEGORY}/${RUN_ID}"
 METRICS_BASE="${METRICS_ROOT}/${SRC_MT}/${TC}/${_ABL}"
 [ -d "${PRED_BASE}" ] || { echo "ERROR: no predictions at ${PRED_BASE} (wrong CATEGORY or contrast?)" >&2; exit 1; }

@@ -1,0 +1,13 @@
+# Low-data texture step, on-harmony T2w-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_21 T2w).
+# (repo key T2w; the paper calls this contrast FLAIR)
+task: Brain T2w(FLAIR)-trained (on-harmony)
+dataset: on-harmony
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/02_metrics/on_harmony_model/T2w
+ood_contrasts: [T1w, bold, dwi_ap, epi_ap, gre_echo1_mag]
+in_domain: [T2w]
+full_data:            # the rung-4.5 / rung-5 runs of the T2w ladder (06_11, ladder_flat_rung.yaml)
+  flat: ablations/auglab_on-harmony_T2w_baseline_kmeans_label_remap_voronoi_flatfill_20261008_211657
+  texture: ablations/auglab_on-harmony_T2w_v26_6_2_train050_val000_20261005_222513
+  n_train: 51-62 sessions
+lowdata_dir: lowdata
+output: lowdata/lowdata_texture_step_summary.md

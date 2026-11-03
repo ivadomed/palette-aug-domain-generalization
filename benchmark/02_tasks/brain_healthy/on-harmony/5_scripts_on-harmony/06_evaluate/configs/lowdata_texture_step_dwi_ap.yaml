@@ -1,0 +1,13 @@
+# Low-data texture step, on-harmony dwi_ap-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_21 dwi_ap).
+# Held-out pool = the dwi_ap ladder's FULL pool (06_12_ladder_summary_dwi_ap.py, OOD_FULL).
+task: Brain dwi_ap-trained (on-harmony)
+dataset: on-harmony
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/02_metrics/on_harmony_model/dwi_ap
+ood_contrasts: [T1w, T2w, bold, epi_ap, gre_echo1_mag]
+in_domain: [dwi_ap]
+full_data:            # the rung-4.5 / rung-5 runs of the dwi_ap ladder (06_12, ladder_flat_rung.yaml)
+  flat: ablations/auglab_on-harmony_dwi_ap_baseline_kmeans_label_remap_voronoi_flatfill_20261008_211658
+  texture: ablations/auglab_on-harmony_dwi_ap_v26_6_2_train050_val000_20261005_222547
+  n_train: 58-68 sessions
+lowdata_dir: lowdata  # 06_01_evaluate_testset.sh with METRICS_SUBDIR=lowdata
+output: lowdata/lowdata_texture_step_summary.md

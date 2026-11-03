@@ -27,6 +27,14 @@ keeps the first N of a *fixed-seed* shuffle of that fold's train keys. The seed 
 constant, so subsets are NESTED as N grows (N=1 ⊂ N=2 ⊂ N=4 ⊂ …) and fully
 reproducible. The validation set is never touched, so every regime is evaluated on
 the same per-fold val cases (fair learning curve).
+
+Distinct subjects (opt-in, 2026-11-03): a dataset whose training keys are SESSIONS of a few
+subjects (on-harmony: 51-68 sessions of 12 subjects per fold, near-duplicate sessions) sets
+``LOWDATA_SUBJECT_RE`` on its LowData class to a regex whose group 1 is the subject id (e.g.
+``r"^(sub-[^_]+)_"``). The same fixed-seed shuffle is then walked in order, keeping a key only
+if its subject is not yet kept, until N keys; if the fold has fewer than N subjects the
+remaining slots are filled from the skipped keys in shuffle order. Deterministic and nested
+as N grows; unset (default) = the plain first-N rule above, unchanged.
 """
 from __future__ import annotations
 
@@ -51,8 +59,30 @@ def parse_lowdata_n(run_id: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def select_subset(train_keys, n: int, subject_re: str | None = None) -> list:
+    """The kept training keys for N (sorted). Plain rule: first N of a LOWDATA_SEED shuffle of the
+    sorted keys. With `subject_re`: walk that shuffle keeping one key per new subject, then fill."""
+    shuffled = sorted(train_keys)
+    random.Random(LOWDATA_SEED).shuffle(shuffled)
+    if not subject_re:
+        return sorted(shuffled[:n])
+    pat = re.compile(subject_re)
+    kept, seen, skipped = [], set(), []
+    for k in shuffled:
+        m = pat.search(k)
+        subj = m.group(1) if m else k
+        if len(kept) < n and subj not in seen:
+            kept.append(k); seen.add(subj)
+        else:
+            skipped.append(k)
+    kept += skipped[: max(0, n - len(kept))]
+    return sorted(kept)
+
+
 class LowDataMixin:
     """Place FIRST in the MRO so this do_split() wraps the underlying one."""
+
+    LOWDATA_SUBJECT_RE = None   # opt-in distinct-subject selection, see the module docstring
 
     def do_split(self):
         tr_keys, val_keys = super().do_split()
@@ -62,10 +92,7 @@ class LowDataMixin:
             return tr_keys, val_keys
 
         full = sorted(tr_keys)
-        rng = random.Random(LOWDATA_SEED)
-        shuffled = full.copy()
-        rng.shuffle(shuffled)
-        subset = sorted(shuffled[:n])
+        subset = select_subset(full, n, self.LOWDATA_SUBJECT_RE)
 
         kept, avail = len(subset), len(full)
         self.print_to_log_file(

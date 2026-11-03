@@ -1,0 +1,21 @@
+# Low-data texture step, pansegdata T2w-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_21 t2w).
+# Grouped held-out pool = the T2W ladder's (06_11_ladder_summary_t2w.py): own t1wce, totalsegmri t1gre, msd-pancreas ct.
+task: Pancreas T2w-trained (pansegdata)
+dataset: pansegdata
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/02_metrics/pansegdata_model/t2w
+in_domain: [t2w]
+extra_ood_sources:
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/totalsegmri-pancreas/8_results_totalsegmri-pancreas/02_metrics/pansegdata_model/t2w
+    run_subdir: t1gre
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/msd-pancreas/8_results_msd-pancreas/02_metrics/pansegdata_model/t2w
+    run_subdir: ct
+ood_groups:
+  t1wce: [t1wce]
+  t1gre: [totalsegmri-pancreas/t1gre]
+  ct: [msd-pancreas/ct]
+full_data:            # the rung-4.5 / rung-5 runs of the T2W ladder (06_11, ladder_flat_rung.yaml)
+  flat: ablations/pansegdata_t2w_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080507
+  texture: ablations/pansegdata_t2w_v26_6_2_train050_val000_20261005_223311
+  n_train: 113-114
+lowdata_dir: lowdata
+output: lowdata/lowdata_texture_step_summary.md

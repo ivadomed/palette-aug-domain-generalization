@@ -1,0 +1,24 @@
+# Low-data texture step, pansegdata T1-CE-trained (00_04_analysis/lowdata/lowdata_texture_step.py, via 06_21 t1wce).
+# Grouped held-out pool = the T1WCE ladder's (06_10_ladder_summary_t1wce.py): own t2w + totalsegmri t2like (T2 group),
+# msd-pancreas ct, totalsegmri t1gre.
+task: Pancreas T1-CE-trained (pansegdata)
+dataset: pansegdata
+metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/02_metrics/pansegdata_model/t1wce
+in_domain: [t1wce]
+extra_ood_sources:
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/totalsegmri-pancreas/8_results_totalsegmri-pancreas/02_metrics/pansegdata_model/t1wce
+    run_subdir: t2like
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/msd-pancreas/8_results_msd-pancreas/02_metrics/pansegdata_model/t1wce
+    run_subdir: ct
+  - metrics_root: ${PROJECT_ROOT}/benchmark/02_tasks/pancreas_disease/totalsegmri-pancreas/8_results_totalsegmri-pancreas/02_metrics/pansegdata_model/t1wce
+    run_subdir: t1gre
+ood_groups:
+  t2w: [t2w, totalsegmri-pancreas/t2like]
+  ct: [msd-pancreas/ct]
+  t1gre: [totalsegmri-pancreas/t1gre]
+full_data:            # the rung-4.5 / rung-5 runs of the T1WCE ladder (06_10, ladder_flat_rung.yaml)
+  flat: ablations/pansegdata_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080433
+  texture: ablations/pansegdata_t1wce_v26_6_2_train050_val000_20261005_223237
+  n_train: 113-114
+lowdata_dir: lowdata  # 06_01_evaluate_run.sh (own and companions) with METRICS_SUBDIR=lowdata
+output: lowdata/lowdata_texture_step_summary.md

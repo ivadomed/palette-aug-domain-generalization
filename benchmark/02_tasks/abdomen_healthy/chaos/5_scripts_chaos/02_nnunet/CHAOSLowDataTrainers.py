@@ -16,6 +16,9 @@ variant per distinct underlying trainer class used by the 6 benchmarked methods:
     auglab_default / synthseg_EM /    → nnUNetTrainerCHAOSAugLabDefault
         synthseg_noEM                   (these 3 differ only by AUGLAB_PARAMS_GPU_JSON)
     auglabAug_v26_6_2 (t025_v100)     → nnUNetTrainerCHAOSAugLabValSynth
+    low-data texture step, texture    → nnUNetTrainerCHAOSAugLabDualVal (the full-data rung-5 "PALETTE alone" trainer,
+        arm (04_93)                     04_48 / 04_63; its RUN_ID has no _val000_, so the val100 mirror step logs and skips;
+                                        the flat arm uses nnUNetTrainerCHAOSAugLabDefaultLowData, as rung 4.5 04_67 / 04_68)
 
 Project root resolved from NNUNET_PROJECT_ROOT (set by the train/predict scripts),
 exactly as CHAOSTrainers.py does.
@@ -37,6 +40,7 @@ try:
     from chaos.trainers.v26_6_2_p50 import nnUNetTrainerCHAOSV26_6_2_p50
     from chaos.trainers.auglab_default import nnUNetTrainerCHAOSAugLabDefault
     from chaos.trainers.auglab_valsynth import nnUNetTrainerCHAOSAugLabValSynth
+    from chaos.trainers.auglab_dualval import nnUNetTrainerCHAOSAugLabDualVal
 
     class nnUNetTrainerCHAOSBaselineLowData(LowDataMixin, nnUNetTrainerCHAOSBaseline):
         pass
@@ -48,6 +52,9 @@ try:
         pass
 
     class nnUNetTrainerCHAOSAugLabValSynthLowData(LowDataMixin, nnUNetTrainerCHAOSAugLabValSynth):
+        pass
+
+    class nnUNetTrainerCHAOSAugLabDualValLowData(LowDataMixin, nnUNetTrainerCHAOSAugLabDualVal):
         pass
 
 except ImportError as e:
