@@ -1,0 +1,187 @@
+# "Texture removed at test time" experiment (2026-11-02): the 9 ablation tasks (all but Spine), ONE training contrast
+# each (the task's first/primary training contrast, as listed first in the paper's ladder panels), folds 0-2, two
+# models: rung 4.5 flat fill (ladder_flat_rung.yaml) and rung 5 texture fill (PA alone, val000) -- the run_keys[4] /
+# run_keys[5] of each task's ladder_series.json (checked by build_pack.py). Items = the ladder's OUT-OF-DOMAIN pool
+# only, from the exact input dirs the original predictions used (each original fold0/<item>/predict_from_raw_data_args
+# .json names its source folder; chaos amos/sliver07 = the crop-before-predict crops, breast = *_uniap, pancreas
+# companions = their per-case FOV-cropped converter output, mandible = the S-I flipped *_sif inputs).
+#
+# item fields: key (unique in the task: <dataset>__<item>), item (the dataset's own item name), input (dir of
+# <case>_0000.nii.gz). The texture-removed copy is a NEW TEST ITEM in the standard layout: <input>_texrm (a symlink to
+# the generated dir under work_root), predicted by the shared drivers with PREDICT_INPUT_SUFFIX=_texrm
+# PREDICT_OUTPUT_SUBDIR=texrm (-> <run>/fold{k}/texrm/<item>/); chaos amos/sliver07 crops instead go to a crop-reuse
+# dir work_root/fovcrop/<dataset>/t1in/imagesTs_<item> for the shared fov_crop_predict_evaluate.sh.
+# passthrough: in-domain items a dataset's evaluator always scores (hard-coded item lists); 05_evaluate.sh links
+# fold{k}/texrm/<item> to the ORIGINAL predictions so the evaluator runs unchanged -- the analysis never reads them.
+# Metrics of the texture-removed predictions land next to the originals as <category>_<RUN_ID>_texrm (Mandible:
+# <metrics>/texture_removal/<category>_<RUN_ID>, its evaluators have no CKPT_TAG).
+
+work_root: /scratch/paulh/texture_removal_test
+partition: {k: 4, cells: 6}
+
+tasks:
+  Abdomen:
+    group: interface
+    dataset: chaos
+    training_contrast: t1in
+    dataset_id: 60
+    ladder: benchmark/02_tasks/abdomen_healthy/chaos/8_results_chaos/02_metrics/chaos_model/t1in/ablations/ladder_series.json
+    models:
+      flat:    {run_id: chaos_t1in_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill_20261008_190938, category: nnUNet,
+                run_dir: benchmark/02_tasks/abdomen_healthy/chaos/8_results_chaos/01_predictions/chaos_model/t1in/nnUNet/chaos_t1in_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill_20261008_190938}
+      texture: {run_id: chaos_t1in_v26_6_2_train050_val000_20260715_082040, category: nnUNet,
+                run_dir: benchmark/02_tasks/abdomen_healthy/chaos/8_results_chaos/01_predictions/chaos_model/t1in/nnUNet/chaos_t1in_v26_6_2_train050_val000_20260715_082040}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/abdomen_healthy/chaos/8_results_chaos/01_predictions/chaos_model/t1in, item: t1in}
+    items:
+      - {key: chaos__t1out, item: t1out, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_t1out}
+      - {key: chaos__t2spir, item: t2spir, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_t2spir}
+      - {key: chaos__ct, item: ct, input: benchmark/02_tasks/abdomen_healthy/chaos/2_nnUNet_chaos/raw/Dataset060_CHAOS_MR_T1in/imagesTs_ct}
+      - {key: amos__ct, item: ct, input: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_ct}
+      - {key: amos__mri, item: mri, input: /scratch/paulh/srcsm_match/fovmirror/amos/_fovcrop/vulcanprep/t1in/imagesTs_mri}
+      - {key: sliver07__ct, item: ct, input: /scratch/paulh/srcsm_match/fovmirror/sliver07/_fovcrop/vulcanprep/t1in/imagesTs_ct}
+
+  Brain:
+    group: interface
+    dataset: on-harmony
+    training_contrast: T1w
+    dataset_id: 31
+    ladder: benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/02_metrics/on_harmony_model/T1w/ablations/ladder_series.json
+    resample_to_native: benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/01_predictions/on_harmony_model/_test_set
+    models:
+      flat:    {run_id: on-harmony_T1w_baseline_kmeans_label_remap_voronoi_flatfill_20261008_211657, category: auglab,
+                run_dir: benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/01_predictions/on_harmony_model/T1w/auglab/on-harmony_T1w_baseline_kmeans_label_remap_voronoi_flatfill_20261008_211657}
+      texture: {run_id: on-harmony_T1w_v26_6_2_train050_val000_20261005_222440, category: auglab,
+                run_dir: benchmark/02_tasks/brain_healthy/on-harmony/8_results_on-harmony/01_predictions/on_harmony_model/T1w/auglab/on-harmony_T1w_v26_6_2_train050_val000_20261005_222440}
+    passthrough: []
+    items:
+      - {key: on-harmony__T2w, item: T2w, input: benchmark/02_tasks/brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/imagesTs_T2w}
+      - {key: on-harmony__bold, item: bold, input: benchmark/02_tasks/brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/imagesTs_bold}
+      - {key: on-harmony__dwi_ap, item: dwi_ap, input: benchmark/02_tasks/brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/imagesTs_dwi_ap}
+      - {key: on-harmony__epi_ap, item: epi_ap, input: benchmark/02_tasks/brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/imagesTs_epi_ap}
+      - {key: on-harmony__gre_echo1_mag, item: gre_echo1_mag, input: benchmark/02_tasks/brain_healthy/on-harmony/2_nnUNet_on-harmony/raw/Dataset031_OnHarmonyT1w31/imagesTs_gre_echo1_mag}
+
+  Mandible:
+    group: interface
+    dataset: toothfairy2
+    training_contrast: cbct
+    dataset_id: 110
+    ladder: benchmark/02_tasks/mandible_healthy/toothfairy2/8_results_toothfairy2/02_metrics/toothfairy2_model/cbct/ablations/ladder_series.json
+    models:
+      flat:    {run_id: toothfairy2_cbct_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191044, category: auglab,
+                run_dir: benchmark/02_tasks/mandible_healthy/toothfairy2/8_results_toothfairy2/01_predictions/toothfairy2_model/cbct/auglab/toothfairy2_cbct_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191044}
+      texture: {run_id: toothfairy2_cbct_v26_6_2_train050_val000_20261005_222846, category: auglab,
+                run_dir: benchmark/02_tasks/mandible_healthy/toothfairy2/8_results_toothfairy2/01_predictions/toothfairy2_model/cbct/auglab/toothfairy2_cbct_v26_6_2_train050_val000_20261005_222846}
+    passthrough: []
+    items:
+      - {key: hanseg__ct, item: ct, input: benchmark/02_tasks/mandible_healthy/hanseg/2_nnUNet_hanseg/raw/imagesTs_ct_sif}
+      - {key: hanseg__mrt1, item: mrt1, input: benchmark/02_tasks/mandible_healthy/hanseg/2_nnUNet_hanseg/raw/imagesTs_mrt1_sif}
+      - {key: pddca__ct, item: ct, input: benchmark/02_tasks/mandible_healthy/pddca/2_nnUNet_pddca/raw/imagesTs_ct_sif}
+
+  Pelvis:
+    group: interface
+    dataset: totalseg-pelvic
+    training_contrast: ct
+    dataset_id: 130
+    ladder: benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/02_metrics/totalseg_pelvic_model/ct/ablations/ladder_series.json
+    models:
+      flat:    {run_id: totalseg-pelvic_ct_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191224, category: auglab,
+                run_dir: benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/01_predictions/totalseg_pelvic_model/ct/auglab/totalseg-pelvic_ct_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191224}
+      texture: {run_id: totalseg-pelvic_ct_v26_6_2_train050_val000_20261005_223025, category: auglab,
+                run_dir: benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/01_predictions/totalseg_pelvic_model/ct/auglab/totalseg-pelvic_ct_v26_6_2_train050_val000_20261005_223025}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/8_results_totalseg-pelvic/01_predictions/totalseg_pelvic_model/ct, item: ct}
+    items:
+      - {key: totalseg-pelvic__mri, item: mri, input: benchmark/02_tasks/pelvis_healthy/totalseg-pelvic/2_nnUNet_totalseg-pelvic/raw/Dataset130_TotalsegPelvic_CT/imagesTs_mri}
+
+  Pancreas:
+    group: interface
+    dataset: pansegdata
+    training_contrast: t1wce
+    dataset_id: 150
+    ladder: benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/02_metrics/pansegdata_model/t1wce/ablations/ladder_series.json
+    models:
+      flat:    {run_id: pansegdata_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080433, category: auglab,
+                run_dir: benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t1wce/auglab/pansegdata_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261009_080433}
+      texture: {run_id: pansegdata_t1wce_v26_6_2_train050_val000_20261005_223237, category: auglab,
+                run_dir: benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t1wce/auglab/pansegdata_t1wce_v26_6_2_train050_val000_20261005_223237}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/pancreas_disease/pansegdata/8_results_pansegdata/01_predictions/pansegdata_model/t1wce, item: t1wce}
+    items:
+      - {key: pansegdata__t2w, item: t2w, input: benchmark/02_tasks/pancreas_disease/pansegdata/2_nnUNet_pansegdata/raw/Dataset150_PanSegData_T1WCE/imagesTs_t2w}
+      - {key: totalsegmri-pancreas__t2like, item: t2like, input: benchmark/02_tasks/pancreas_disease/totalsegmri-pancreas/2_nnUNet_totalsegmri-pancreas/raw/imagesTs_t2like}
+      - {key: totalsegmri-pancreas__t1gre, item: t1gre, input: benchmark/02_tasks/pancreas_disease/totalsegmri-pancreas/2_nnUNet_totalsegmri-pancreas/raw/imagesTs_t1gre}
+      - {key: msd-pancreas__ct, item: ct, input: benchmark/02_tasks/pancreas_disease/msd-pancreas/2_nnUNet_msd-pancreas/raw/imagesTs_ct}
+
+  Glioma:
+    group: appearance
+    dataset: brats2024-glioma
+    training_contrast: t1n
+    dataset_id: 51
+    ladder: benchmark/02_tasks/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/02_metrics/brats2024_glioma_model/t1n/ablations/ladder_series.json
+    models:
+      flat:    {run_id: brats2024-glioma_t1n_baseline_kmeans_label_remap_voronoi_flatfill_20261008_190618, category: auglab,
+                run_dir: benchmark/02_tasks/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t1n/auglab/brats2024-glioma_t1n_baseline_kmeans_label_remap_voronoi_flatfill_20261008_190618}
+      texture: {run_id: brats2024-glioma_t1n_v26_6_2_train050_val000_20261005_222227, category: auglab,
+                run_dir: benchmark/02_tasks/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t1n/auglab/brats2024-glioma_t1n_v26_6_2_train050_val000_20261005_222227}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/brain_tumor/brats2024-glioma/8_results_brats2024-glioma/01_predictions/brats2024_glioma_model/t1n, item: t1n}
+    items:
+      - {key: brats2024-glioma__t1c, item: t1c, input: benchmark/02_tasks/brain_tumor/brats2024-glioma/2_nnUNet_brats2024-glioma/raw/Dataset051_BraTS2024GliomaT1n/imagesTs_t1c}
+      - {key: brats2024-glioma__t2w, item: t2w, input: benchmark/02_tasks/brain_tumor/brats2024-glioma/2_nnUNet_brats2024-glioma/raw/Dataset051_BraTS2024GliomaT1n/imagesTs_t2w}
+      - {key: brats2024-glioma__t2f, item: t2f, input: benchmark/02_tasks/brain_tumor/brats2024-glioma/2_nnUNet_brats2024-glioma/raw/Dataset051_BraTS2024GliomaT1n/imagesTs_t2f}
+
+  MS:
+    group: appearance
+    dataset: open-ms
+    training_contrast: flair
+    dataset_id: 70
+    ladder: benchmark/02_tasks/brain_ms/open-ms/8_results_open-ms/02_metrics/open_ms_model/flair/ablations/ladder_series.json
+    models:
+      flat:    {run_id: open-ms_flair_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill_20261008_190831, category: nnUNet,
+                run_dir: benchmark/02_tasks/brain_ms/open-ms/8_results_open-ms/01_predictions/open_ms_model/flair/nnUNet/open-ms_flair_baseline_kmeans_label_remap_voronoi_train050_val000_flatfill_20261008_190831}
+      texture: {run_id: open-ms_flair_v26_6_2_train050_val000_20260711_062946, category: nnUNet,
+                run_dir: benchmark/02_tasks/brain_ms/open-ms/8_results_open-ms/01_predictions/open_ms_model/flair/nnUNet/open-ms_flair_v26_6_2_train050_val000_20260711_062946}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/brain_ms/open-ms/8_results_open-ms/01_predictions/open_ms_model/flair, item: flair}
+    items:
+      - {key: open-ms__t1w, item: t1w, input: benchmark/02_tasks/brain_ms/open-ms/2_nnUNet_open-ms/raw/Dataset070_OpenMS_FLAIR/imagesTs_t1w}
+      - {key: open-ms__t2w, item: t2w, input: benchmark/02_tasks/brain_ms/open-ms/2_nnUNet_open-ms/raw/Dataset070_OpenMS_FLAIR/imagesTs_t2w}
+
+  Breast:
+    group: appearance
+    dataset: ispy2
+    training_contrast: t1wce
+    dataset_id: 100
+    ladder: benchmark/02_tasks/breast_cancer/ispy2/8_results_ispy2/02_metrics/ispy2_model/t1wce/ablations/ladder_series.json
+    models:
+      flat:    {run_id: ispy2_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191117, category: auglab,
+                run_dir: benchmark/02_tasks/breast_cancer/ispy2/8_results_ispy2/01_predictions/ispy2_model/t1wce/auglab/ispy2_t1wce_baseline_kmeans_label_remap_voronoi_flatfill_20261008_191117}
+      texture: {run_id: ispy2_t1wce_v26_6_2_train050_val000_20261005_222919, category: auglab,
+                run_dir: benchmark/02_tasks/breast_cancer/ispy2/8_results_ispy2/01_predictions/ispy2_model/t1wce/auglab/ispy2_t1wce_v26_6_2_train050_val000_20261005_222919}
+    passthrough:
+      - {pred_root: benchmark/02_tasks/breast_cancer/ispy2/8_results_ispy2/01_predictions/ispy2_model/t1wce, item: t1wce}
+    items:
+      - {key: ispy2__t2w, item: t2w, input: benchmark/02_tasks/breast_cancer/ispy2/2_nnUNet_ispy2/raw/Dataset100_ISPY2T1wce/imagesTs_t2w}
+      - {key: duke-breast-mri__precontrast_uniap, item: precontrast_uniap, input: benchmark/02_tasks/breast_cancer/duke-breast-mri/2_nnUNet_duke-breast-mri/raw/imagesTs_precontrast_uniap}
+      - {key: ispy1__precontrast, item: precontrast, input: benchmark/02_tasks/breast_cancer/ispy1/2_nnUNet_ispy1/raw/imagesTs_precontrast}
+      - {key: acrin6698__dwi_uniap, item: dwi_uniap, input: benchmark/02_tasks/breast_cancer/acrin6698/2_nnUNet_acrin6698/raw/imagesTs_dwi_uniap}
+
+  HCC:
+    group: appearance
+    dataset: atlas-liver-hcc
+    training_contrast: t1w
+    dataset_id: 80
+    restricted: true   # LLD-MMRI DUA: internal use at one site only; no images in figures, no redistribution
+    ladder: benchmark/02_tasks/liver_hcc/atlas-liver-hcc/8_results_atlas-liver-hcc/02_metrics/atlas_liver_hcc_model/t1w/ablations/ladder_series.json
+    models:
+      flat:    {run_id: atlas-liver-hcc_t1w_baseline_kmeans_label_remap_voronoi_flatfill_20261010_073719, category: auglab,
+                run_dir: benchmark/02_tasks/liver_hcc/atlas-liver-hcc/8_results_atlas-liver-hcc/01_predictions/atlas_liver_hcc_model/t1w/auglab/atlas-liver-hcc_t1w_baseline_kmeans_label_remap_voronoi_flatfill_20261010_073719}
+      texture: {run_id: atlas-liver-hcc_t1w_v26_6_2_train050_val000_20261007_141144, category: auglab,
+                run_dir: benchmark/02_tasks/liver_hcc/atlas-liver-hcc/8_results_atlas-liver-hcc/01_predictions/atlas_liver_hcc_model/t1w/auglab/atlas-liver-hcc_t1w_v26_6_2_train050_val000_20261007_141144}
+    passthrough: []
+    items:
+      - {key: lld-mmri-hcc__t2wi, item: t2wi, input: benchmark/02_tasks/liver_hcc/lld-mmri-hcc/2_nnUNet_lld-mmri-hcc/raw/imagesTs_t2wi}
+      - {key: lld-mmri-hcc__dwi, item: dwi, input: benchmark/02_tasks/liver_hcc/lld-mmri-hcc/2_nnUNet_lld-mmri-hcc/raw/imagesTs_dwi}
+      - {key: lld-mmri-hcc__inphase, item: inphase, input: benchmark/02_tasks/liver_hcc/lld-mmri-hcc/2_nnUNet_lld-mmri-hcc/raw/imagesTs_inphase}
+      - {key: lld-mmri-hcc__outphase, item: outphase, input: benchmark/02_tasks/liver_hcc/lld-mmri-hcc/2_nnUNet_lld-mmri-hcc/raw/imagesTs_outphase}
