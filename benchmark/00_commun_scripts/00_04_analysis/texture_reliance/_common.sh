@@ -10,4 +10,4 @@ cd "${ROOT}"
 source scripts/job_runner/run_job.sh
 export RUN_JOB_ACCOUNT="${RUN_JOB_ACCOUNT:-aip-jcohen}"
 # submit <run_job args...>: run_job, echo the Slurm job id only (spaced out: no burst of sbatch calls)
-submit() { local out; out="$(run_job "$@")"; echo "${out}" >&2; sleep 2; echo "${out}" | grep -o '[0-9]\+$' | tail -1; }
+submit() { local out; out="$(run_job "$@" </dev/null)"; echo "${out}" >&2; sleep 2; echo "${out}" | grep -o '[0-9]\+$' | tail -1; }
