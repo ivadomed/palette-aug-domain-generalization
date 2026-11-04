@@ -9,6 +9,9 @@ Two subcommands:
       number therefore uses the engine's own fold cap, pooling, patient merging and Wilcoxon. Also: the unrestricted
       rerun (sanity check against the on-disk ladder_series.json), baseline in-domain Dice per label, label volume
       from labelsTr, and the hardest-tercile label set (settings with >= 8 labels). Writes D/<K>.json.
+      Amendment 2026-11-03 (README): every per-label / tercile / unrestricted rerun is ALSO done with the engine's table
+      aggregation (table_agg=True) and tested with the paper's contrast-stratified sign-flip test on patients
+      (paper/scripts/compute_flatfill_decomposition.stratified, the test of tab:dissociation), under the key "tab".
   analyze --out-dir D
       Reads every D/*.json, writes label_table.csv, setting_tests.csv, SUMMARY.md and gain_vs_difficulty.png.
 
@@ -23,6 +26,7 @@ import io
 import itertools
 import json
 import math
+import os
 import re
 import runpy
 import sys
@@ -36,6 +40,20 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
 sys.path.insert(0, str(REPO / "benchmark/00_commun_scripts/00_03_evaluate"))
 import ladder_ood_common as L  # noqa: E402
+
+# The paper's test (amendment 2026-11-03): compute_flatfill_decomposition reads LADDER_TABLE_AGG at import. The engine
+# itself reads it per call unless table_agg is passed, so every engine call below passes table_agg explicitly.
+os.environ["LADDER_TABLE_AGG"] = "1"
+os.environ.pop("LADDER_SERIES_ROOT", None)
+os.environ.setdefault("SCRATCH", f"/scratch/{os.environ.get('USER', '')}")  # CFD reads it at import
+sys.path.insert(0, str(REPO / "paper/scripts"))
+import compute_flatfill_decomposition as CFD  # noqa: E402
+
+# CFD caches the engine's CSV readers per run dir; the label filter below changes what a run dir yields, so restore
+# the uncached readers (CFD calls them through the module attribute).
+L.load_case_means = CFD._orig_lcm
+L.load_case_rows = CFD._orig_lcr
+CFD.mpc.load_case_means = CFD._orig_lcm
 
 # ── label-restricted CSV reader for the engine (only eval_all.csv files go through L.csv) ──────────────────────────
 _ROWS: dict = {}
@@ -61,6 +79,32 @@ L.csv = types.SimpleNamespace(DictReader=_FilteredDictReader)
 L._write_combined_png = lambda *a, **k: None
 L._write_per_contrast_png = lambda *a, **k: None
 _REAL_RUN_LADDER = L.run_ladder
+
+# Table aggregation of a grouped ladder uses the main table's tree registered for the FULL group (ladder_table_groups.yaml;
+# the engine requires the tree to reference exactly the group's members). A label run drops members holding no case of
+# the label (run_engine), so the registered tree is pruned to the remaining members; within it the other labels' leaves
+# hold no rows and drop out of the average (empty children are skipped).
+_ORIG_GROUPS: dict | None = None
+_REAL_TABLE_TREES = L._table_trees
+
+
+def _prune_tree(node, keep: set):
+    if isinstance(node, dict) and not L._is_table_leaf(node):
+        out = {k: _prune_tree(ch, keep) for k, ch in node.items()}
+        return {k: v for k, v in out.items() if v}
+    leaves = node if isinstance(node, list) else [node]
+    kept = [lf for lf in leaves if (lf["item"] if isinstance(lf, dict) else lf) in keep]
+    return kept if isinstance(node, list) else (kept[0] if kept else None)
+
+
+def _table_trees_pruned(ablations_root, groups):
+    if not _ORIG_GROUPS or all(set(m) == set(_ORIG_GROUPS.get(g, [])) for g, m in groups.items()):
+        return _REAL_TABLE_TREES(ablations_root, groups)
+    full = _REAL_TABLE_TREES(ablations_root, _ORIG_GROUPS)
+    return {g: _prune_tree(full[g], set(m)) for g, m in groups.items()}
+
+
+L._table_trees = _table_trees_pruned
 
 
 def capture(script: str) -> dict:
@@ -91,8 +135,13 @@ def capture(script: str) -> dict:
 def run_engine(kw: dict, labels: set | None, tmp: Path) -> dict:
     """The engine's ladder for `labels` (None = all). Grouped ladders: a group member with no case of these labels
     (e.g. CHAOS's own CT holds only the liver) is dropped from its group (it contributes nothing), empty groups too."""
-    global _FILTER
-    kw = {**kw, "ablations_root": tmp, "combined_png": False}
+    global _FILTER, _ORIG_GROUPS
+    _ORIG_GROUPS = kw.get("ood_groups")
+    # outputs under tmp, but keep the repo-relative ablations path: the engine's registries (ladder_table_groups.yaml,
+    # ladder_pv_branch.yaml) are matched on the END of ablations_root
+    ab = tmp / Path(kw["ablations_root"]).resolve().relative_to(REPO)
+    ab.mkdir(parents=True, exist_ok=True)
+    kw = {"table_agg": False, **kw, "ablations_root": ab, "combined_png": False}
     groups = kw.get("ood_groups")
     for _ in range(10):
         _FILTER = labels
@@ -110,6 +159,25 @@ def run_engine(kw: dict, labels: set | None, tmp: Path) -> dict:
         finally:
             _FILTER = None
     raise RuntimeError("could not resolve ood_groups")
+
+
+def table_step(kw: dict, labels: set | None, tmp: Path) -> dict:
+    """Table-aggregated rerun for `labels` + the paper's contrast-stratified sign-flip test of the flat -> texture step
+    (CFD.stratified as in step_tests: one ladder, common=True, i.e. unrestricted for Dice under table aggregation)."""
+    global _FILTER
+    dump = run_engine({**kw, "table_agg": True}, labels, tmp)
+    s = step(dump)
+    d = dict(dump)
+    d["_path"] = Path(kw["ablations_root"]) / "ladder_series.json"   # parent.parent = the ladder's metrics root
+    _FILTER = labels
+    try:
+        r = CFD.stratified([d], "dice", True, pair=CFD.STEP_PAIRS["texture"], common=True)
+    finally:
+        _FILTER = None
+    if r is None or not np.isclose(r["delta"], s["gain"], atol=1e-6):
+        raise SystemExit(f"sign-flip delta {None if r is None else r['delta']} != table series step {s['gain']}")
+    return {"noise": s["noise"], "flat": s["flat"], "texture": s["texture"], "gain": s["gain"],
+            "p": r["p"], "n_units": r["n_units"], "mode": r["mode"], "floor": r["floor"]}
 
 
 def step(dump: dict) -> dict:
@@ -162,7 +230,12 @@ def compute(a):
     # sanity (i): unrestricted rerun vs on-disk ladder_series.json
     full = step(run_engine(kw, None, tmp))
     disk = json.loads((Path(kw["ablations_root"]) / "ladder_series.json").read_text())
-    out["sanity"] = {"rerun": full, "on_disk": step(disk)}
+    out["sanity"] = {"rerun": full, "on_disk": step(disk), "rerun_table": table_step(kw, None, tmp)}
+    mirror = Path(os.environ.get("LABEL_DIFFICULTY_TABLE_MIRROR",
+                                 "/project/aip-jcohen/paulh/paper_inputs_20261025/labelfirst/ladders_table"))
+    mp = mirror / Path(kw["ablations_root"]).resolve().relative_to(REPO) / "ladder_series.json"
+    if mp.exists():
+        out["sanity"]["paper_mirror_table"] = step(json.loads(mp.read_text()))
 
     # label roster = labels in the flat/real runs' CSVs (all sources)
     flat_key = disk["run_keys"][disk["labels"].index(L.FLAT_RUNG_LABEL)]
@@ -203,6 +276,7 @@ def compute(a):
         s["baseline_ind"] = float(np.mean(list(cm.values()))) * 100 if cm else float("nan")
         s["volume_ml"] = vols[lb]
         s["nan_rows_flat"], s["rows_flat"] = nan_rows.get(lb, 0), tot_rows.get(lb, 0)
+        s["tab"] = table_step(kw, {lb}, tmp)
         per[lb] = s
     out["labels"] = per
     out["label_mean_gain"] = float(np.nanmean([s["gain"] for s in per.values()]))
@@ -214,11 +288,13 @@ def compute(a):
         for name, sel in (("hardest", order[:k]), ("easiest", order[-k:])):
             s = step(run_engine(kw, set(sel), tmp))
             s["labels"] = sel
+            s["tab"] = table_step(kw, set(sel), tmp)
             out["terciles"][name] = s
     Path(a.out_dir).mkdir(parents=True, exist_ok=True)
     (Path(a.out_dir) / f"{a.setting}.json").write_text(json.dumps(out, indent=1, default=float))
     print(f"{a.setting}: {len(labels)} labels; ladder step on disk {out['sanity']['on_disk']['gain']:+.3f}, "
-          f"rerun {full['gain']:+.3f}, label-mean {out['label_mean_gain']:+.3f}")
+          f"rerun {full['gain']:+.3f}, label-mean {out['label_mean_gain']:+.3f}; table rerun "
+          f"{out['sanity']['rerun_table']['gain']:+.3f} (p {out['sanity']['rerun_table']['p']:.3g})")
 
 
 # ── analysis ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -300,10 +376,15 @@ def analyze(a):
                          "gain": v["gain"], "p_wilcoxon": v["p"], "n_patients": v["n_patients"],
                          "flat_ood": v["flat"], "texture_ood": v["texture"], "noise_ood": v["noise"],
                          "baseline_ind": v["baseline_ind"], "volume_ml": v["volume_ml"],
-                         "nan_rows_flat": v["nan_rows_flat"], "rows_flat": v["rows_flat"]})
+                         "nan_rows_flat": v["nan_rows_flat"], "rows_flat": v["rows_flat"],
+                         "gain_tab": v["tab"]["gain"], "p_signflip": v["tab"]["p"], "n_units": v["tab"]["n_units"],
+                         "flat_ood_tab": v["tab"]["flat"], "texture_ood_tab": v["tab"]["texture"],
+                         "noise_ood_tab": v["tab"]["noise"]})
         t = {"setting": s["setting"], "task": s["task"], "type": s["type"], "n_labels": len(labs),
              "ladder_step_on_disk": s["sanity"]["on_disk"]["gain"], "ladder_step_rerun": s["sanity"]["rerun"]["gain"],
-             "label_mean_gain": s["label_mean_gain"]}
+             "label_mean_gain": s["label_mean_gain"],
+             "step_table_rerun": s["sanity"]["rerun_table"]["gain"], "p_table_rerun": s["sanity"]["rerun_table"]["p"],
+             "step_paper_mirror": (s["sanity"].get("paper_mirror_table") or {}).get("gain", float("nan"))}
         for m, x in diff.items():
             x = np.array(x, float)
             ok = np.isfinite(x) & np.isfinite(g)
@@ -317,6 +398,14 @@ def analyze(a):
             tt = (s.get("terciles") or {}).get(name)
             t[f"{name}_tercile_gain"] = tt["gain"] if tt else float("nan")
             t[f"{name}_tercile_p"] = tt["p"] if tt else float("nan")
+            t[f"{name}_tercile_gain_tab"] = tt["tab"]["gain"] if tt else float("nan")
+            t[f"{name}_tercile_p_signflip"] = tt["tab"]["p"] if tt else float("nan")
+        # amendment: difficulty (c) and gain both table-aggregated
+        gt = np.array([s["labels"][lb]["tab"]["gain"] for lb in labs])
+        xt = np.array([s["labels"][lb]["tab"]["noise"] for lb in labs])
+        ok = np.isfinite(xt) & np.isfinite(gt)
+        t["rho_c_noise_ood_tab"], t["p_c_noise_ood_tab"] = (spearman(xt[ok], gt[ok]) if ok.sum() >= 3
+                                                            else (float("nan"), float("nan")))
         tests.append(t)
 
     def write_csv(path, recs):
@@ -335,6 +424,10 @@ def analyze(a):
           "| setting | on-disk ladder | engine rerun | mean of per-label gains |", "|---|---|---|---|"]
     for t in tests:
         md.append(f"| {t['setting']} | {t['ladder_step_on_disk']:+.2f} | {t['ladder_step_rerun']:+.2f} | {t['label_mean_gain']:+.2f} |")
+    md += ["", "## Amendment 2026-11-03: table-aggregated rerun (paper's estimand and test)", "",
+           "| setting | table rerun step | sign-flip p | paper mirror step |", "|---|---|---|---|"]
+    for t in tests:
+        md.append(f"| {t['setting']} | {t['step_table_rerun']:+.2f} | {t['p_table_rerun']:.3g} | {t['step_paper_mirror']:+.2f} |")
     md += ["", "## Per-setting Spearman rho(gain, difficulty) [permutation p]", "",
            "| setting | type | n | (a) flat OOD | (c) noise OOD | (d) (T+F)/2 | (b) baseline IND | partial log-vol (a) | (c) | (d) | hardest third gain [p] | easiest third gain [p] |",
            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -372,6 +465,23 @@ def analyze(a):
            f"- powered settings with rho_c < 0 and p < 0.05: {sig_c}/{len(powered)}",
            f"- powered settings whose hardest third gains significantly (> 0, p < 0.05): {hard_pos}/{len(powered)}",
            f"- **verdict: {verdict}**"]
+    # amendment 2026-11-03: same rule, table aggregation + the paper's sign-flip test
+    neg_t = sum(1 for t in inter if t["rho_c_noise_ood_tab"] < 0)
+    sig_t = sum(1 for t in powered if t["rho_c_noise_ood_tab"] < 0 and t["p_c_noise_ood_tab"] < 0.05)
+    hard_t = sum(1 for t in powered if t["hardest_tercile_gain_tab"] > 0 and t["hardest_tercile_p_signflip"] < 0.05)
+    if neg_t >= 5 and sig_t >= 3 and hard_t >= 3:
+        verdict_t = "H_D supported (difficulty explains the gain at label level)"
+    elif (neg_t <= 4 or sig_t <= 1) and (len(powered) - hard_t) >= 4:
+        verdict_t = "H_T supported (no difficulty slope inside interface tasks)"
+    else:
+        verdict_t = "mixed / inconclusive"
+    md += ["", "## Same decision, amendment 2026-11-03 (table aggregation, contrast-stratified sign-flip test)", "",
+           f"- interface settings with rho_c < 0: {neg_t}/{len(inter)}",
+           f"- powered settings with rho_c < 0 and p < 0.05: {sig_t}/{len(powered)}",
+           f"- powered settings whose hardest third gains significantly (> 0, p < 0.05): {hard_t}/{len(powered)}",
+           "- hardest third (gain [sign-flip p]): " + ", ".join(
+               f"{t['setting']} {t['hardest_tercile_gain_tab']:+.2f} [{t['hardest_tercile_p_signflip']:.2g}]" for t in powered),
+           f"- **verdict: {verdict_t}**"]
     (D / "SUMMARY.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
     plot(D, settings)

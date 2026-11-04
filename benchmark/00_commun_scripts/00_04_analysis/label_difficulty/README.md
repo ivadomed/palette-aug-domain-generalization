@@ -89,3 +89,13 @@ dropped) and are reported, with per-label NaN counts.
 
 Code and this file are committed. Results (csv, md, png) go to `outputs/` (gitignored) or `$SCRATCH`, never to git
 (public repo; no results or case ids in commits).
+
+## Amendment 2026-11-03 (reporting test; written after the first results)
+
+For the paper, the per-label texture step, the hardest-third step and their tests are reported with the estimand and the
+test of the paper's other texture-step tables (tab:dissociation): the engine's table aggregation (`table_agg=True`,
+LADDER_TABLE_AGG) and the two-sided contrast-stratified sign-flip test on patients
+(`paper/scripts/compute_flatfill_decomposition.stratified`, reused, not re-implemented). The difficulty measure (c) is
+the table-aggregated noise-fill Dice of the label. The hardest third keeps the preregistered set (lowest case-mean (c)).
+The preregistered outputs (case-first means, the engine's pooled Wilcoxon) are kept unchanged next to the new columns
+(`*_tab`, `p_signflip`), and SUMMARY.md evaluates the same decision rule under both.
