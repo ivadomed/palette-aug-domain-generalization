@@ -132,7 +132,14 @@ the main launch.
 
 ### Calibration log
 
-(none yet)
+2026-11-04, pilot on Vulcan L40S (job 2121511, code 5c9fb9a, plain arm, seed 0, 4000 its):
+lam = 0: IND 100.0, OOD 21.7; lam = 1: IND 97.6, OOD 66.6 (Dice points). V1 and V2 pass at both
+ends, so **no generator constant was changed**. Timing probe (300 its, 4 processes on one GPU):
+plain 0.028 s/it; flat and texture ~0.45 s/it, almost all in the transform (per-sample k-means +
+Voronoi loop), i.e. ~30-35 min per cell of three concurrent arms, ~30 GPU-h for the grid.
+Compute: the main grid runs on Vulcan L40S (Killarney's L40S queue had ~4,500 pending jobs and
+fair-share 0.02; the same probe started on Vulcan within minutes). Same code, same AugLab pin
+(f018536, `git archive` to Vulcan's `$SCRATCH/synthetic_texture/auglab_pin`).
 
 ## 7. Deviations from the benchmark
 
