@@ -134,8 +134,9 @@ def one(args):
     tmp = dst.with_name(dst.name + ".tmp.nii.gz")
     sitk.WriteImage(out, str(tmp), useCompression=True)
     chk = sitk.ReadImage(str(tmp))
-    geom_ok = (chk.GetSize() == img.GetSize() and np.allclose(chk.GetSpacing(), img.GetSpacing())
-               and np.allclose(chk.GetOrigin(), img.GetOrigin()) and np.allclose(chk.GetDirection(), img.GetDirection()))
+    geom_ok = (chk.GetSize() == img.GetSize() and np.allclose(chk.GetSpacing(), img.GetSpacing(), rtol=1e-5, atol=1e-5)
+               and np.allclose(chk.GetOrigin(), img.GetOrigin(), rtol=1e-5, atol=1e-3)
+               and np.allclose(chk.GetDirection(), img.GetDirection(), atol=1e-5))   # float32 header precision
     if not geom_ok:
         tmp.unlink()
         raise RuntimeError(f"geometry changed for {src}")

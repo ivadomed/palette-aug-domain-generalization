@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -43,6 +44,11 @@ def main():
     a = ap.parse_args()
     D = json.loads((a.work / "manifest.json").read_text())["domains"][a.domain]
     md = D["models"][a.model]
+    # trainer registration shims import the dataset's trainer package via NNUNET_PROJECT_ROOT (as predict_common.sh
+    # exports it in every predict job); the training dataset's scripts dir also goes on sys.path like env.sh does
+    os.environ["NNUNET_PROJECT_ROOT"] = str(REPO)
+    ds_root = Path(md["run_dir"]).parents[5]
+    sys.path.insert(0, str(ds_root / f"5_scripts_{ds_root.name}"))
     import torch
     from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
     t0 = time.time()

@@ -8,6 +8,7 @@ mkdir -p "${WORK}/gen_stats"
 ONLY=" $* "
 while IFS=$'\t' read -r task input ds item output salt open; do
   [ "${ONLY}" = "  " ] || [[ "${ONLY}" == *" ${task} "* ]] || continue
+  [ -z "${PERTURB_MATCH:-}" ] || [[ "${output}" == *"${PERTURB_MATCH}"* ]] || continue
   n=$(ls "${input}" | grep -c '_0000.nii.gz')
   mins=$(( 30 + n * 2 ))                   # ~1-2 min per large CT with 4 workers, generous
   t=$(printf '%02d:%02d:00' $(( mins / 60 )) $(( mins % 60 )))
