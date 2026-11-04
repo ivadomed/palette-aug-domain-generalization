@@ -70,7 +70,22 @@ def case_values(rows, key):
     return {k: float(np.mean(v)) for k, v in acc.items()}
 
 
-def domain_stats(D, rows, metric):
+def qc_failed_cases(work: Path, D: dict) -> set:
+    """{(label, case)} of this domain whose perturbed image fails a QC gate (exploratory sensitivity analysis only)."""
+    out = set()
+    for it in D["items"]:
+        f_ = work / "gen_stats" / f"T__{D['task']}__{Path(it['perturbed']).name}.tsv"
+        if not f_.exists():
+            continue
+        with f_.open() as fh:
+            for r in csv.DictReader(fh, delimiter="\t"):
+                v = {k: f(x) for k, x in r.items() if k not in ("case", "mode", "shape")}
+                if not gate(v):
+                    out.add((it["label"], r["case"]))
+    return out
+
+
+def domain_stats(D, rows, metric, exclude=frozenset()):
     """metric 'S' (1 - agreement) or 'G' (GT Dice drop). Returns dict of domain-level numbers."""
     if metric == "S":
         cv = {k: 1.0 - v for k, v in case_values(rows, "agree").items()}
@@ -86,6 +101,9 @@ def domain_stats(D, rows, metric):
         for lab in labels:
             it = next(x for x in D["items"] if x["label"] == lab)
             for c in it["cases"]:
+                if (lab, c) in exclude:
+                    dropped += 1
+                    continue
                 a, b = cv.get(("texture", lab, c)), cv.get(("flat", lab, c))
                 if a is None or b is None:
                     dropped += 1
@@ -141,6 +159,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", type=Path, default=Path("/scratch/paulh/texture_reliance"))
     ap.add_argument("--qc-only", action="store_true")
+    ap.add_argument("--exclude-qc-fail", action="store_true",
+                    help="EXPLORATORY (not preregistered): drop cases whose perturbed image fails a QC gate")
     a = ap.parse_args()
     if a.qc_only:
         q = qc_summary(a.work)
@@ -157,12 +177,16 @@ def main():
             missing.append(dom)
             continue
         rows = read_score(p)
-        res[dom] = dict(task=D["task"], group=D["group"], S=domain_stats(D, rows, "S"), G=domain_stats(D, rows, "G"))
-    od = a.work / "analysis"
+        ex = qc_failed_cases(a.work, D) if a.exclude_qc_fail else frozenset()
+        res[dom] = dict(task=D["task"], group=D["group"], S=domain_stats(D, rows, "S", ex), G=domain_stats(D, rows, "G", ex))
+    od = a.work / ("analysis_qcpass_exploratory" if a.exclude_qc_fail else "analysis")
     od.mkdir(parents=True, exist_ok=True)
     doms = [d for d in M if d in res and res[d]["S"]]
     L = ["# Texture reliance: phase-scrambled fine texture, texture fill vs flat fill (scratch only, not for git)", "",
          f"Domains scored: {len(doms)}/19" + (f"; missing: {', '.join(missing)}" if missing else ""), ""]
+    if a.exclude_qc_fail:
+        L += ["**EXPLORATORY, NOT PREREGISTERED: cases whose perturbed image fails a QC gate are dropped "
+              "(column n cases; the verdict line below does not apply to this variant).**", ""]
     qc = qc_summary(a.work)
     L += ["## QC of perturbation T (gates per image: |scr_corr| <= 0.05, le_corr >= 0.80, fine_corr <= 0.50, "
           "lp4_frac <= 0.25, lp4_rel <= 0.15; operator passes if >= 95% of T images pass; control_all must fail)", "",
