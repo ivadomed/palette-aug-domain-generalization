@@ -195,8 +195,10 @@ def same_content(dirs, quick=False) -> bool:
 
 
 ONH_TESTSET = T / "brain_healthy/on-harmony/8_results_on-harmony/01_predictions/on_harmony_model/_test_set"
-# GT label ids that differ from the model's ids (the dataset evaluators' own maps): amos 06_00_evaluate_amos.py ORGAN_MAP
-GT_ID_MAP = {"amos": {"liver": 6, "right_kidney": 2, "left_kidney": 3, "spleen": 1}}
+# GT label ids that differ from the model's ids (the dataset evaluators' own maps): amos 06_00_evaluate_amos.py ORGAN_MAP;
+# lld-mmri-hcc 06_01_evaluate_run.sh LABEL_MAP (atlas tumour id 2 -> lesion GT id 1)
+GT_ID_MAP = {"amos": {"liver": 6, "right_kidney": 2, "left_kidney": 3, "spleen": 1},
+             "lld-mmri-hcc": {"tumour": 1}}
 
 
 def gt_of(inp: Path, ds: str, item: str):
