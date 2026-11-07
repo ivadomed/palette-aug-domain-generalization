@@ -28,6 +28,16 @@ vrun() { ssh -n -o BatchMode=yes klogin02 "ssh -o BatchMode=yes vulcan.alliancec
 trun() { ssh -n -o BatchMode=yes klogin02 "ssh -o BatchMode=yes vulcan.alliancecan.ca $(printf '%q' "ssh -o BatchMode=yes tamia.alliancecan.ca $(printf '%q' "bash -lc $(printf '%q' "$1")")")"; }
 [ "$(hostname -s)" = klogin02 ] && vrun() { ssh -n -o BatchMode=yes vulcan.alliancecan.ca "bash -lc $(printf '%q' "$1")"; }
 [ "$(hostname -s)" = klogin02 ] && trun() { ssh -n -o BatchMode=yes vulcan.alliancecan.ca "ssh -o BatchMode=yes tamia.alliancecan.ca $(printf '%q' "bash -lc $(printf '%q' "$1")")"; }
+# any Killarney login node with its own Vulcan master (~/bin/ssh-master) talks to Vulcan directly, and to TamIA directly when it has a
+# TamIA master too (2026-11-07: klogin03 had both, klogin02 none)
+vsend() { ssh -o BatchMode=yes klogin02 "ssh -o BatchMode=yes vulcan.alliancecan.ca '$1'"; }
+[ "$(hostname -s)" = klogin02 ] && vsend() { ssh -o BatchMode=yes vulcan.alliancecan.ca "$1"; }
+if ssh -O check vulcan.alliancecan.ca 2>/dev/null; then
+  vrun() { ssh -n -o BatchMode=yes vulcan.alliancecan.ca "bash -lc $(printf '%q' "$1")"; }
+  vsend() { ssh -o BatchMode=yes vulcan.alliancecan.ca "$1"; }
+  trun() { ssh -n -o BatchMode=yes vulcan.alliancecan.ca "ssh -o BatchMode=yes tamia.alliancecan.ca $(printf '%q' "bash -lc $(printf '%q' "$1")")"; }
+fi
+ssh -O check tamia.alliancecan.ca 2>/dev/null && trun() { ssh -n -o BatchMode=yes tamia.alliancecan.ca "bash -lc $(printf '%q' "$1")"; }
 
 # verification snippet, identical on every cluster: prints "<HEAD> <dirty count> <config md5> <tree md5>"
 verify_snip() {  # $1 pin dir, $2 config name
@@ -58,9 +68,10 @@ git -C "${SRC}" bundle verify -q "${LB}" >/dev/null
 echo "[repin] bundle ${LB} ($(stat -c %s "${LB}") bytes, md5 $(md5sum < "${LB}" | cut -c1-32))"
 # ship: Killarney -> Vulcan scratch -> TamIA scratch
 vrun "mkdir -p ${BDIR_V}"
-ssh -o BatchMode=yes klogin02 "ssh -o BatchMode=yes vulcan.alliancecan.ca 'cat > ${BDIR_V}/${B}'" < "${LB}"
+vsend "cat > ${BDIR_V}/${B}" < "${LB}"
 trun "mkdir -p ${BDIR_T}"
-vrun "ssh -o BatchMode=yes tamia.alliancecan.ca 'cat > ${BDIR_T}/${B}' < ${BDIR_V}/${B}"
+if ssh -O check tamia.alliancecan.ca 2>/dev/null; then ssh -o BatchMode=yes tamia.alliancecan.ca "cat > ${BDIR_T}/${B}" < "${LB}"
+else vrun "ssh -o BatchMode=yes tamia.alliancecan.ca 'cat > ${BDIR_T}/${B}' < ${BDIR_V}/${B}"; fi
 lm="$(md5sum < "${LB}" | cut -c1-32)"
 [ "$(vrun "md5sum < ${BDIR_V}/${B} | cut -c1-32")" = "${lm}" ] && [ "$(trun "md5sum < ${BDIR_T}/${B} | cut -c1-32")" = "${lm}" ] \
   || { echo "[repin] bundle md5 differs after transfer"; exit 1; }
@@ -85,6 +96,6 @@ for x in "$K" "$V" "$T"; do
 done
 TSV="$(printf 'key\tvalue\nauglab_commit\t%s\nauglab_source\tKillarney %s (branch gin-ipa, never pushed), bundle %s md5 %s\nconfig\t%s\nconfig_md5\t%s\ntree_md5\t%s\npin_vulcan\t%s\npin_killarney\t%s\npin_tamia\t%s\npinned_at\t%s\n' \
   "${sha}" "${SRC}" "${B}" "${lm}" "${CFG}" "${kc}" "${kt}" "${ROOT_V}/${s12}/AugLab" "${ROOT_K}/${s12}/AugLab" "${ROOT_T}/${s12}/AugLab" "$(date -u '+%F %T UTC')")"
-printf '%s\n' "${TSV}" | ssh -o BatchMode=yes klogin02 "ssh -o BatchMode=yes vulcan.alliancecan.ca 'cat > ${VREPO}/scripts/cluster/ginipa/PIN.conf'"
+printf '%s\n' "${TSV}" | vsend "cat > ${VREPO}/scripts/cluster/ginipa/PIN.conf"
 echo "[repin] VERIFY PASSED on all three clusters; wrote ${VREPO}/scripts/cluster/ginipa/PIN.conf:"; printf '%s\n' "${TSV}"
 echo "[repin] next (Vulcan): commit PIN.conf (skill git-workflow), then 'bash scripts/cluster/ginipa/ginipa.sh runtable' and 'record'."
