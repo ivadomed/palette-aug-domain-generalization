@@ -43,6 +43,7 @@ pass() {
     local v="${LINE["${rid}|${f}"]:-}" st
     if [ -z "${v}" ]; then out+="${s}:f${f}:${cl}:no-log "; continue; fi
     IFS=$'\t' read -r ep fn nn dice where <<<"${v}"
+    [ "${fn}" = - ] && fn=""; [ "${dice}" = - ] && dice=""   # nan_scan.py prints '-' for an empty field
     if [ -n "${fn}" ]; then
       st=NAN; nbad=$((nbad + 1))
       if ! "${VSSH[@]}" "[ -f ${R}/watch/NAN_${s}_f${f} ]"; then

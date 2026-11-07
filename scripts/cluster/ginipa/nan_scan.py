@@ -23,4 +23,4 @@ for root in sys.argv[2:]:
             continue
         fold = re.search(r'/fold_(\d)/', log).group(1)
         rd = log.split('/auglab/')[1].split('/')[0]
-        print('\t'.join(map(str, [rd, fold, log, ep, first, nbad, dice])))
+        print('\t'.join(str(x) if str(x) != '' else '-' for x in [rd, fold, log, ep, first, nbad, dice]))  # '-' = empty: bash read collapses empty tab fields
