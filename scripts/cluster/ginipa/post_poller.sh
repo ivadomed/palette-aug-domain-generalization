@@ -69,7 +69,7 @@ while :; do
       M=""; for f in 0 1 2; do fd="$(ls -d "${VRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} | head -1)"; M="${M}$(cd "${fd}" && bash -c "${MD5Q}" | sed "s|^|fold_${f} |")"$'\n'; done
       [ -n "${DRY:-}" ] || printf '%s %s\n%s' "${VRD}" "$(date '+%F %T')" "${M}" > "${SD}/SYNCED"; log "${s}: all 3 folds on Vulcan -> SYNCED"
     fi
-    if j="$(run sbatch --parsable --account=aip-jcohen --cpus-per-task=16 --mem=96G --time=20:00:00 --job-name="ginipapost_${s}" \
+    if j="$(run sbatch --parsable --account=aip-jcohen --cpus-per-task=16 --mem=96G --time=3-00:00:00 --job-name="ginipapost_${s}" \
             --output="${SD}/post_job_%j.log" --wrap "bash scripts/cluster/ginipa/post_run.sh ${s}")"; then
       [ -n "${DRY:-}" ] || echo "${j} $(date '+%F %T')" > "${SD}/POST_JOB"; log "${s}: controller ${j}"; left=$((left - 1))
     else log "${s}: sbatch failed -- retry next cycle"; fi

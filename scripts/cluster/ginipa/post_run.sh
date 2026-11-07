@@ -8,7 +8,7 @@
 # method-agnostic), and the audit = scripts/cluster/flatauglab/audit_vs_headline.py --run-table <this arm's run table>.
 # Model = the Vulcan run dir that post_poller.sh verified (<post dir>/<setting>/SYNCED: all 3 folds best + final, md5).
 # Submitted (CPU job; predicts are L40S run_job --wait jobs) by post_poller.sh, or by hand:
-#   sbatch --account=aip-jcohen --cpus-per-task=16 --mem=96G --time=20:00:00 --job-name=ginipapost_<setting> \
+#   sbatch --account=aip-jcohen --cpus-per-task=16 --mem=96G --time=3-00:00:00 --job-name=ginipapost_<setting> \
 #     --output=<root>/post/<setting>/post_job_%j.log --wrap "bash scripts/cluster/ginipa/post_run.sh <setting>"
 # DRY=1: print the steps without running them (works before training ends). Status: <post dir>/<setting>/POST.status.
 set -uo pipefail
