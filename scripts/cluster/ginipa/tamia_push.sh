@@ -37,7 +37,7 @@ push_unit() {   # push_unit UNIT DRY -> 0 ok, 1 refused/failed
     rel="${tfd#*/auglab/${rid}/}"; vfd="${vrd}/${rel}"; tpar="$(dirname "${tfd}")"; vpar="$(dirname "${vfd}")"
     log "${s} f${f}: ${TA}:${tfd} -> ${V}:${vfd} (last logged ${ep})"
     [ "${DRY}" = 1 ] && { n=$((n + 1)); continue; }
-    ssh -o BatchMode=yes "${TA}" "cd ${tpar} && tar cf - --exclude='fold_*/wandb' --exclude='fold_*/validation' *.json fold_${f}" \
+    ssh -n -o BatchMode=yes "${TA}" "cd ${tpar} && tar cf - --exclude='fold_*/wandb' --exclude='fold_*/validation' *.json fold_${f}" \
       | ssh -o BatchMode=yes "${V}" "mkdir -p ${vpar} && tar xf - -C ${vpar}" || { log "  copy failed"; return 1; }
     L="$(t "cd ${tfd} && ${Q}")"; M="$(v "cd ${vfd} && ${Q}")"
     [ -n "${L}" ] && [ "${L}" = "${M}" ] || { log "  MISMATCH TamIA '${L}' / Vulcan '${M}'"; return 1; }
