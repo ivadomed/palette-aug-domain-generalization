@@ -368,27 +368,34 @@ fi
 #   1. scancel the unit's TamIA chain (tail first);  2. ginipa.sh move <UNIT> [--dry-run]  (refuses while a ginipa_<UNIT> job is queued
 #   on TamIA; rsync + md5 of checkpoint_latest / checkpoint_best per fold into the Vulcan run dir; run table rows -> cluster vulcan, unit
 #   MV_<setting>_f<k>, backup kept);  3. ALLOW_EXISTING=1 ginipa.sh record vulcan MV_...;  4. ginipa.sh submit vulcan MV_...
+# --from relay: Vulcan has no TamIA master (since 2026-11-07), so tamia_push.sh (Killarney login node, masters to both) copies the
+#   unfinished folds through that node and writes .ginipa_moved_from_tamia; here only rows with that marker move (finished folds stay
+#   TamIA rows: tamia_relay.sh brings them over for predict + eval).
 if [ "${MODE}" = move ]; then
   [ "${GINIPA_CLUSTER}" = vulcan ] || { echo "move runs on Vulcan"; exit 1; }
   U="${1:?move <TamIA unit> [--from killarney] [--dry-run]}"; shift; DRY=0; SRC=tamia
   while [ $# -gt 0 ]; do case "$1" in --dry-run) DRY=1 ;; --from) SRC="$2"; shift ;; esac; shift; done
-  if [ "${SRC}" = killarney ]; then
+  if [ "${SRC}" = killarney ] || [ "${SRC}" = relay ]; then
+    MK=.ginipa_moved_from_killarney; [ "${SRC}" = relay ] && MK=.ginipa_moved_from_tamia; SRCCL=killarney; [ "${SRC}" = relay ] && SRCCL=tamia
     # Killarney units are pushed by `killarney.sh push <unit>` (run on Killarney after scancel of the chain: rsync + md5, then a marker in each
     # Vulcan fold dir); here only check the markers + checkpoint_latest and switch the run table rows (same RUN_IDs) to Vulcan units.
     NEWU=""
     while IFS=$'\t' read -r s f dn tc ep tr ld cl unit g seg st cm cfg md5 rid tw sd; do
       envf="$(grep -o 'source "$(dirname "$0")/../00_utils/env[a-z0-9_]*\.sh"' "${T}/${sd}/04_train/${tw}" | sed 's|.*/00_utils/||; s|"$||')"
       VRD="$( source "${T}/${sd}/00_utils/${envf}" >/dev/null 2>&1; echo "${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab/${rid}" )"
-      vfd="$(ls -d "${VRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} 2>/dev/null | head -1)"
-      [ -n "${vfd}" ] && [ -f "${vfd}/.ginipa_moved_from_killarney" ] && [ -f "${vfd}/checkpoint_latest.pth" ] \
-        || { echo "REFUSING: ${s} f${f}: no pushed fold (marker + checkpoint_latest) under ${VRD} -- run killarney.sh push ${U} on Killarney"; exit 1; }
-      echo "[move] ${s} f${f}: $(head -1 "${vfd}/.ginipa_moved_from_killarney")"; NEWU="${NEWU} MV_${s}_f${f}"
-    done < <(rows_of killarney "${U}")
-    [ -n "${NEWU}" ] || { echo "no Killarney rows for unit ${U}"; exit 1; }
+      vfd="$(ls -d "${VRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} 2>/dev/null | head -1 || true)"
+      if [ -z "${vfd}" ] || [ ! -f "${vfd}/${MK}" ] || [ ! -f "${vfd}/checkpoint_latest.pth" ]; then
+        [ "${SRC}" = relay ] && { echo "[move] ${s} f${f}: no ${MK} -- stays a TamIA row (finished there; tamia_relay.sh copies it)"; continue; }
+        echo "REFUSING: ${s} f${f}: no pushed fold (marker + checkpoint_latest) under ${VRD} -- run killarney.sh push ${U} on Killarney"; exit 1
+      fi
+      echo "[move] ${s} f${f}: $(head -1 "${vfd}/${MK}")"; NEWU="${NEWU} MV_${s}_f${f}"; MVF="${MVF:-} ${s}:${f}"
+    done < <(rows_of "${SRCCL}" "${U}")
+    [ -n "${NEWU}" ] || { echo "no pushed ${SRCCL} rows for unit ${U}"; exit 1; }
     if [ "${DRY}" = 0 ]; then
+      mkdir -p "${R}/_launch"
       cp "${RT}" "${RT}.bak_move_${U}_$(date +%Y%m%d_%H%M%S)"
-      awk -F'\t' -v OFS='\t' -v u="${U}" 'NR>1 && $8=="killarney" && $9==u {$8="vulcan"; $9="MV_"$1"_f"$2; $10=0} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
-      echo "$(date '+%F %T') moved Killarney unit ${U} (chain cancelled, pushed + md5-verified) -> Vulcan units${NEWU}" | tee -a "${R}/MOVES.log" "${R}/_launch/LAUNCH_LOG.txt" >> "${R}/LAUNCH_INFO"
+      awk -F'\t' -v OFS='\t' -v u="${U}" -v c="${SRCCL}" -v m="${MVF} " 'NR>1 && $8==c && $9==u && index(m, " "$1":"$2" ") {$8="vulcan"; $9="MV_"$1"_f"$2; $10=0} {print}' "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
+      echo "$(date '+%F %T') moved ${SRCCL} unit ${U} (chain cancelled, pushed + md5-verified) -> Vulcan units${NEWU}" | tee -a "${R}/MOVES.log" "${R}/_launch/LAUNCH_LOG.txt" >> "${R}/LAUNCH_INFO"
     fi
     echo "next: ALLOW_EXISTING=1 bash scripts/cluster/ginipa/ginipa.sh record vulcan${NEWU} && bash scripts/cluster/ginipa/ginipa.sh submit vulcan${NEWU}"
     exit 0
