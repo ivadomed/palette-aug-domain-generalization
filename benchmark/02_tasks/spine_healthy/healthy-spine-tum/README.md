@@ -1,5 +1,16 @@
 # healthy-spine-TUM — externally-computed results
 
+> **Third drop, 2026-11-09** (same importer, `--verify` now checks every folder against the
+> metrics already on disk). The six arms already imported reproduce exactly. New arms:
+> - `SRCSM` → `srcsm` metrics `<run>_srcmatch` (SRC + test-time source matching, the reported
+>   SRCSM, as for every other task); `SRCSM_no-source-matching` → the plain `srcsm` run next to it.
+>   The headline `srcsm` row now points at the `_srcmatch` run.
+> - `SynthsegEM05+GE` → `synthsegEM_train050_val000` (SynthSeg-EM at a 50% synthesis rate, the
+>   "sem50" arm of the other tasks).
+> - `ImageContrastV26-05+GE` reproduces `palette05_ge`'s Dice and adds HD95. It is Palette without
+>   Auglab ("Palette" / PA in the paper); Spine has no ablation ladder, so the paper scripts take
+>   it as the task's PA run directly.
+
 > **Re-imported 2026-10-02** from the collaborators' second drop, which adds HD95.
 > The importer is now `5_scripts_healthy-spine-tum/06_evaluate/06_00_import_tum_tsv.py`
 > (replaces the one-off `_import_tum_tsv_20260805.py`, kept for provenance only in
@@ -11,7 +22,7 @@
 > - `synthseg_noEM` in the 2026-08-05 import was **truncated** (8-81 subjects per
 >   test group instead of 27-219); now complete. Its combined Dice 50.4 -> 47.5.
 > The superseded metrics are archived at `benchmark/03_archive/healthy-spine-tum_import_20260805/`.
-> Still no SRCSM arm.
+> No SRCSM arm in this drop (added 2026-11-09, see above).
 
 
 > ⚠️ **This dataset currently exists as `8_results_healthy-spine-tum/` ONLY.** No raw data,
@@ -36,15 +47,16 @@ train-one-modality / evaluate-cross-contrast methodology (see root the project n
 | `Synthseg10NoEM+GE` | `synthseg_noEM` | auglab | |
 | `Synthseg10+GE` | `synthseg_EM` | auglab | |
 | `PALETTE-05+Paper` | `auglabAug_v26_6_2` (**OURS**) | auglab | user-confirmed 2026-08-05 |
-| `PALETTE-05+GE` | `palette05_ge` | auglab | extra arm, **not** part of the fixed 6 — kept under its own name rather than force-mapped |
+| `PALETTE-05+GE` / `ImageContrastV26-05+GE` | `palette05_ge` | auglab | Palette without Auglab (PA); not a row of the fixed 7-method configs |
+| `SRCSM` | `srcsm` (`..._srcmatch`) | auglab | SRC + source matching = reported SRCSM (2026-11-09) |
+| `SRCSM_no-source-matching` | `srcsm` (plain) | auglab | 2026-11-09 |
+| `SynthsegEM05+GE` | `synthsegEM_train050_val000` | auglab | SynthSeg-EM at 50% (2026-11-09) |
 
-`palette05_ge`'s `eval_all.csv` files exist on disk under `8_results_healthy-spine-tum/02_metrics/`
-but are intentionally excluded from every `06_evaluate/configs/*.yaml` — it never appears in the
-per-modality, combined, or significance tables. This is a deliberate scope decision (not part of
-the fixed 6/7-method suite), not an oversight.
+`palette05_ge` (PA) and `synthsegEM_train050_val000` (sem50) are not rows of the dataset's own
+`06_evaluate/configs/*.yaml` tables, like PA and sem50 of every other task: the paper scripts add
+them per setting (PA by run id, since Spine has no ladder).
 
-No SRCSM arm is present in this drop — the 6-method table for this dataset is currently missing
-that row (unlike the 4 core training datasets, which have all 6).
+Until 2026-11-09 there was no SRCSM arm and the `srcsm` row rendered blank.
 
 ## Train-contrast mapping
 

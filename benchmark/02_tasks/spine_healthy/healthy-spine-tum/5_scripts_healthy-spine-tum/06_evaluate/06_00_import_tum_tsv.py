@@ -26,12 +26,14 @@ The old-name folders for those two carry no HD95, so the new names win. Re-run
 2026-11-09 drop: the old-name folders are gone. Every folder already imported is
 checked against the eval_all.csv files on disk (Dice must match row for row);
 ImageContrastV26-05+GE reproduces palette05_ge's Dice and adds its HD95. New arms
-(imported under their own slugs, not wired into any config):
   SynthsegEM05+GE            -> synthsegEM_train050_val000 (SynthSeg-EM at 50%, the
                                 "sem50" arm of every other task)
-  SRCSM, SRCSM_no-source-matching -> tum_srcsm, tum_srcsm_no_source_matching
-                                (named after the folders until the collaborators
-                                confirm which one has test-time source matching)
+  SRCSM                      -> srcsm ..._srcmatch: SRC + test-time source matching,
+                                the reported SRCSM (folder name trusted, as for the
+                                other tasks' <run>_srcmatch metrics)
+  SRCSM_no-source-matching   -> srcsm (plain SRC, kept next to it)
+  ImageContrastV26-05+GE     == Palette without Auglab ("PA") for Spine, which has
+                                no ladder
 Run dirs whose eval_all.csv would not change are left untouched.
 
 The 2026-08-05 import of Synthseg10NoEM+GE was TRUNCATED (8-81 subjects per
@@ -60,7 +62,7 @@ DST = DATASET_ROOT / "8_results_healthy-spine-tum/02_metrics/healthy_spine_tum_m
 RUN_TS = "20260805_130846"
 
 TRAIN = {"SG_CT": "ct", "SG_in-phase": "inphase"}
-# source folder -> (category, method slug)
+# source folder -> (category, method slug[, suffix after the stamp])
 METHODS = {
     "Base":                      ("nnUNet", "baseline"),
     "newd":                      ("auglab", "auglab_default"),
@@ -69,8 +71,8 @@ METHODS = {
     "ImageContrastV26-05+Paper": ("auglab", "auglabAug_v26_6_2"),   # OURS
     "ImageContrastV26-05+GE":    ("auglab", "palette05_ge"),        # extra arm, not in the suite
     "SynthsegEM05+GE":           ("auglab", "synthsegEM_train050_val000"),
-    "SRCSM":                     ("auglab", "tum_srcsm"),
-    "SRCSM_no-source-matching":  ("auglab", "tum_srcsm_no_source_matching"),
+    "SRCSM":                     ("auglab", "srcsm", "_srcmatch"),   # reported SRCSM
+    "SRCSM_no-source-matching":  ("auglab", "srcsm"),
 }
 LABELS = ["vertebra", "ivd", "spinal_canal"]
 FNAME = re.compile(r"^(spider|spinegan)-test-(.+)\.tsv$")
@@ -103,8 +105,8 @@ def rows_of(folder: Path):
                                finite_or_nan(r.get(f"{lab}-global_bin_hd95", "")))
 
 
-def run_dir(dst: Path, train: str, cat: str, slug: str) -> Path:
-    return dst / train / f"{cat}_healthy-spine-tum_{train}_{slug}_{RUN_TS}"
+def run_dir(dst: Path, train: str, cat: str, slug: str, suffix: str = "") -> Path:
+    return dst / train / f"{cat}_healthy-spine-tum_{train}_{slug}_{RUN_TS}{suffix}"
 
 
 def imported(rd: Path) -> dict:
@@ -120,7 +122,7 @@ def verify(src: Path, dst: Path) -> None:
     """Every mapped folder whose run is already imported must reproduce its Dice row for row."""
     ref: dict = {}
     for tdir, train in TRAIN.items():
-        for folder, (cat, slug) in METHODS.items():
+        for folder, spec in METHODS.items():
             if not (src / tdir / folder).is_dir():
                 raise SystemExit(f"missing source folder {src / tdir / folder}")
             a = {r[:4]: r[4] for r in rows_of(src / tdir / folder)}
@@ -128,7 +130,7 @@ def verify(src: Path, dst: Path) -> None:
             if ref.setdefault(tdir, keys) != keys:
                 raise SystemExit(f"{tdir}/{folder}: subject set differs from the other folders")
             nh = sum(1 for r in rows_of(src / tdir / folder) if r[5] != "nan")
-            rd = run_dir(dst, train, cat, slug)
+            rd = run_dir(dst, train, *spec)
             if not rd.is_dir():
                 print(f"new      {tdir}/{folder} -> {rd.name} ({len(a)} rows, {nh} finite HD95)")
                 continue
@@ -151,12 +153,12 @@ def main():
         return
     n = 0
     for tdir, train in TRAIN.items():
-        for folder, (cat, slug) in METHODS.items():
+        for folder, spec in METHODS.items():
             by_fold: dict = {}
             for k, g, case, lab, d, h in rows_of(a.src / tdir / folder):
                 by_fold.setdefault(k, []).append((g, case, lab, d, h))
             for k, rows in by_fold.items():
-                out = run_dir(a.dst, train, cat, slug) / f"fold{k}"
+                out = run_dir(a.dst, train, *spec) / f"fold{k}"
                 buf = io.StringIO()
                 w = csv.writer(buf)
                 w.writerow(["group", "case", "label", "dice", "hd95"])

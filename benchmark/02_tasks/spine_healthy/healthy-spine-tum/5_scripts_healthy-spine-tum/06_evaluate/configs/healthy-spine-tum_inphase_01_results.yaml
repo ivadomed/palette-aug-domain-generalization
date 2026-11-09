@@ -1,7 +1,9 @@
 # Fixed 7-method order (no others): baseline, synthseg_noEM, synthseg_EM,
 # auglab_default, srcsm, auglabAug_v26_6_2 train050_val000, then train050_val100.
 # See ../healthy-spine-tum_ct_01_results.yaml and ../../README.md for why this
-# dataset has blank rows (srcsm, val100 not run) and an absolute metrics_dir.
+# dataset has a blank row (val100 not run) and an absolute metrics_dir.
+# 2026-11-09: SRCSM arrived in the collaborators' 2026-11-09 drop. srcsm = SRC + test-time source matching (as
+# published, like every other task): run id <run>_srcmatch; the plain SRC run sits next to it (healthy-spine-tum_<m>_srcsm_20260805_130846).
 title: "healthy-spine-TUM — trained on Dixon in-phase — results"
 metrics_dir: "/project/aip-jcohen/paulh/mri_synthesis_project/benchmark/02_tasks/spine_healthy/healthy-spine-tum/8_results_healthy-spine-tum/02_metrics/healthy_spine_tum_model/inphase"
 output_prefix: "01_results"
@@ -12,6 +14,6 @@ runs:
   - healthy-spine-tum_inphase_synthseg_noEM_20260805_130846
   - healthy-spine-tum_inphase_synthseg_EM_20260805_130846
   - healthy-spine-tum_inphase_auglab_default_20260805_130846
-  - healthy-spine-tum_inphase_srcsm  # not run for this dataset — blank row
+  - healthy-spine-tum_inphase_srcsm_20260805_130846_srcmatch
   - healthy-spine-tum_inphase_auglabAug_v26_6_2_20260805_130846  # single OURS variant, standing in for train050_val000
   - healthy-spine-tum_inphase_auglabAug_v26_6_2_train050_val100  # not run for this dataset — blank row

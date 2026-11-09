@@ -2,8 +2,10 @@
 # auglab_default, srcsm, auglabAug_v26_6_2 train050_val000, then train050_val100.
 # This dataset's results were imported externally (see ../../README.md) and only
 # cover baseline/synthseg_noEM/synthseg_EM/auglab_default + a single OURS variant
-# (no srcsm run, no val000/val100 split) — srcsm and the val100 slot are declared
-# below anyway so they render as blank rows rather than being silently dropped.
+# (no val000/val100 split) — the val100 slot is declared below anyway so it
+# renders as a blank row rather than being silently dropped.
+# 2026-11-09: SRCSM arrived in the collaborators' 2026-11-09 drop. srcsm = SRC + test-time source matching (as
+# published, like every other task): run id <run>_srcmatch; the plain SRC run sits next to it (healthy-spine-tum_<m>_srcsm_20260805_130846).
 # metrics_dir is an absolute path (not ${METRICS_ROOT}) because this dataset has
 # no 00_utils/env.sh yet to export it — see the project notes' ${METRICS_ROOT}
 # cleanup note for why an unset/unquoted version of that variable is dangerous.
@@ -17,6 +19,6 @@ runs:
   - healthy-spine-tum_ct_synthseg_noEM_20260805_130846
   - healthy-spine-tum_ct_synthseg_EM_20260805_130846
   - healthy-spine-tum_ct_auglab_default_20260805_130846
-  - healthy-spine-tum_ct_srcsm  # not run for this dataset — blank row
+  - healthy-spine-tum_ct_srcsm_20260805_130846_srcmatch
   - healthy-spine-tum_ct_auglabAug_v26_6_2_20260805_130846  # single OURS variant, standing in for train050_val000
   - healthy-spine-tum_ct_auglabAug_v26_6_2_train050_val100  # not run for this dataset — blank row

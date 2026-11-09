@@ -13,4 +13,5 @@ runs:
   - healthy-spine-tum_inphase_auglab_default_20260805_130846
   - healthy-spine-tum_inphase_synthseg_noEM_20260805_130846
   - healthy-spine-tum_inphase_synthseg_EM_20260805_130846
+  - healthy-spine-tum_inphase_srcsm_20260805_130846_srcmatch
   - healthy-spine-tum_inphase_auglabAug_v26_6_2_20260805_130846
