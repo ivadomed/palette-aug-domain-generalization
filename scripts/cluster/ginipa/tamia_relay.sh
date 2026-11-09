@@ -28,7 +28,7 @@ pass() {
     [ "${st}" = done ] || continue
     rel="${tfd#*/auglab/${rid}/}"; vfd="${vrd}/${rel}"; tpar="$(dirname "${tfd}")"; vpar="$(dirname "${vfd}")"
     log "${s} f${f}: ${TA}:${tfd} -> ${V}:${vfd}"
-    ssh -o BatchMode=yes "${TA}" "cd ${tpar} && tar cf - --exclude='fold_*/wandb' --exclude='fold_*/validation/*.nii.gz' --exclude='fold_*/validation/*.npz' *.json fold_${f}" \
+    ssh -n -o BatchMode=yes "${TA}" "cd ${tpar} && tar cf - --exclude='fold_*/wandb' --exclude='fold_*/validation/*.nii.gz' --exclude='fold_*/validation/*.npz' *.json fold_${f}" \
       | ssh -o BatchMode=yes "${V}" "mkdir -p ${vpar} && tar xf - -C ${vpar}" || { log "  copy failed (retry next pass)"; continue; }
     L="$(t "cd ${tfd} && ${MD5Q}")"; M="$(v "cd ${vfd} && ${MD5Q}")"
     if [ -n "${L}" ] && [ "${L}" = "${M}" ]; then
