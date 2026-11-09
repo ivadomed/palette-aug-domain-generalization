@@ -23,12 +23,23 @@ renamed folders while adding HD95, and the names are not self-explanatory:
 The old-name folders for those two carry no HD95, so the new names win. Re-run
 --verify after any new drop before trusting a mapping.
 
+2026-11-09 drop: the old-name folders are gone. Every folder already imported is
+checked against the eval_all.csv files on disk (Dice must match row for row);
+ImageContrastV26-05+GE reproduces palette05_ge's Dice and adds its HD95. New arms
+(imported under their own slugs, not wired into any config):
+  SynthsegEM05+GE            -> synthsegEM_train050_val000 (SynthSeg-EM at 50%, the
+                                "sem50" arm of every other task)
+  SRCSM, SRCSM_no-source-matching -> tum_srcsm, tum_srcsm_no_source_matching
+                                (named after the folders until the collaborators
+                                confirm which one has test-time source matching)
+Run dirs whose eval_all.csv would not change are left untouched.
+
 The 2026-08-05 import of Synthseg10NoEM+GE was TRUNCATED (8-81 subjects per
 test group instead of 27-219); the 2026-10-02 drop is complete and matches every
 other method's subject set exactly.
 
 Usage:
-  .venv/bin/python 06_00_import_tum_tsv.py <extracted tsv/ dir> [--verify]
+  .venv/bin/python 06_00_import_tum_tsv.py <extracted tsv/ dir> [--verify] [--dst <02_metrics/healthy_spine_tum_model>]
   (extract with Python zipfile, not unzip: the archive stores its directories
    with mode 000, which unzip reproduces as unreadable folders)
 """
@@ -36,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import math
 import re
 import sys
@@ -55,10 +67,11 @@ METHODS = {
     "Synthseg10NoEM+GE":         ("auglab", "synthseg_noEM"),
     "Synthseg10+GE":             ("auglab", "synthseg_EM"),
     "ImageContrastV26-05+Paper": ("auglab", "auglabAug_v26_6_2"),   # OURS
-    "PALETTE-05+GE":             ("auglab", "palette05_ge"),        # extra arm, not in the suite
+    "ImageContrastV26-05+GE":    ("auglab", "palette05_ge"),        # extra arm, not in the suite
+    "SynthsegEM05+GE":           ("auglab", "synthsegEM_train050_val000"),
+    "SRCSM":                     ("auglab", "tum_srcsm"),
+    "SRCSM_no-source-matching":  ("auglab", "tum_srcsm_no_source_matching"),
 }
-# (new folder, folder whose Dice it must reproduce exactly)
-EQUIVALENT = [("ImageContrastV26-05+Paper", "PALETTE-05+Paper"), ("newd", "Paper")]
 LABELS = ["vertebra", "ivd", "spinal_canal"]
 FNAME = re.compile(r"^(spider|spinegan)-test-(.+)\.tsv$")
 
@@ -90,44 +103,72 @@ def rows_of(folder: Path):
                                finite_or_nan(r.get(f"{lab}-global_bin_hd95", "")))
 
 
-def verify(src: Path) -> None:
-    for tdir in TRAIN:
-        for new, old in EQUIVALENT:
-            a = {r[:4]: r[4] for r in rows_of(src / tdir / new)}
-            b = {r[:4]: r[4] for r in rows_of(src / tdir / old)}
+def run_dir(dst: Path, train: str, cat: str, slug: str) -> Path:
+    return dst / train / f"{cat}_healthy-spine-tum_{train}_{slug}_{RUN_TS}"
+
+
+def imported(rd: Path) -> dict:
+    out = {}
+    for fold_dir in sorted(rd.glob("fold*")):
+        with open(fold_dir / "eval_all.csv", newline="") as f:
+            for r in csv.DictReader(f):
+                out[(fold_dir.name[4:], r["group"], r["case"], r["label"])] = r["dice"]
+    return out
+
+
+def verify(src: Path, dst: Path) -> None:
+    """Every mapped folder whose run is already imported must reproduce its Dice row for row."""
+    ref: dict = {}
+    for tdir, train in TRAIN.items():
+        for folder, (cat, slug) in METHODS.items():
+            if not (src / tdir / folder).is_dir():
+                raise SystemExit(f"missing source folder {src / tdir / folder}")
+            a = {r[:4]: r[4] for r in rows_of(src / tdir / folder)}
+            keys = frozenset(a)
+            if ref.setdefault(tdir, keys) != keys:
+                raise SystemExit(f"{tdir}/{folder}: subject set differs from the other folders")
+            nh = sum(1 for r in rows_of(src / tdir / folder) if r[5] != "nan")
+            rd = run_dir(dst, train, cat, slug)
+            if not rd.is_dir():
+                print(f"new      {tdir}/{folder} -> {rd.name} ({len(a)} rows, {nh} finite HD95)")
+                continue
+            b = imported(rd)
             bad = sum(1 for k in a if b.get(k) != a[k])
             if bad or set(a) != set(b):
-                raise SystemExit(f"{tdir}: {new} does not reproduce {old}'s Dice "
+                raise SystemExit(f"{tdir}/{folder} does not reproduce {rd.name}'s Dice "
                                  f"({bad} mismatches) -- mapping is wrong for this drop")
-            print(f"verified {tdir}: {new} == {old} on all {len(a)} rows")
+            print(f"verified {tdir}/{folder} == {rd.name} on all {len(a)} rows ({nh} finite HD95)")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src", type=Path, help="extracted tsv/ directory")
     ap.add_argument("--verify", action="store_true", help="only check the mapping")
+    ap.add_argument("--dst", type=Path, default=DST, help="02_metrics/healthy_spine_tum_model dir to write")
     a = ap.parse_args()
-    verify(a.src)
+    verify(a.src, a.dst)
     if a.verify:
         return
     n = 0
     for tdir, train in TRAIN.items():
         for folder, (cat, slug) in METHODS.items():
-            src = a.src / tdir / folder
-            if not src.is_dir():
-                raise SystemExit(f"missing source folder {src}")
             by_fold: dict = {}
-            for k, g, case, lab, d, h in rows_of(src):
+            for k, g, case, lab, d, h in rows_of(a.src / tdir / folder):
                 by_fold.setdefault(k, []).append((g, case, lab, d, h))
             for k, rows in by_fold.items():
-                out = DST / train / f"{cat}_healthy-spine-tum_{train}_{slug}_{RUN_TS}" / f"fold{k}"
+                out = run_dir(a.dst, train, cat, slug) / f"fold{k}"
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(["group", "case", "label", "dice", "hd95"])
+                w.writerows(rows)
+                data = buf.getvalue().encode()
+                if (out / "eval_all.csv").is_file() and (out / "eval_all.csv").read_bytes() == data:
+                    continue
                 out.mkdir(parents=True, exist_ok=True)
-                with open(out / "eval_all.csv", "w", newline="") as f:
-                    w = csv.writer(f)
-                    w.writerow(["group", "case", "label", "dice", "hd95"])
-                    w.writerows(rows)
+                (out / "eval_all.csv").write_bytes(data)
+                print(f"wrote {out}/eval_all.csv ({len(rows)} rows)")
                 n += len(rows)
-    print(f"wrote {n} rows under {DST}")
+    print(f"wrote {n} rows under {a.dst}")
 
 
 if __name__ == "__main__":
