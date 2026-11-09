@@ -22,3 +22,4 @@ runs:
   - healthy-spine-tum_ct_srcsm_20260805_130846_srcmatch
   - healthy-spine-tum_ct_auglabAug_v26_6_2_20260805_130846  # single OURS variant, standing in for train050_val000
   - healthy-spine-tum_ct_auglabAug_v26_6_2_train050_val100  # not run for this dataset — blank row
+  - healthy-spine-tum_ct_palette05_ge_20260805_130846  # Palette alone (PA), as the other tasks' v26_6_2 run
