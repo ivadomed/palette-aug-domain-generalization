@@ -10,8 +10,16 @@
 #                             running one is left to end), push it, then on Vulcan: ginipa.sh move <UNIT> --from relay, record, submit.
 #                             Done units: <root>/post/tamia_push_done/<UNIT>; stop: touch <root>/post/STOP_PUSH (Vulcan).
 #   systemd-run --user --scope --unit=ginipa-push -- nohup bash tamia_push.sh auto T1 T2 >> push.log 2>&1 &
+#   back [--dry-run] NEW_UNIT MV_...  the inverse, for MV units that never started on Vulcan (scancel their chains on Vulcan first): checks
+#                             that TamIA's and Vulcan's checkpoint_latest / checkpoint_best both still equal .ginipa_moved_from_tamia and
+#                             that neither side has checkpoint_final, writes <Vulcan fold dir>/.ginipa_back_to_tamia, runs
+#                             `ginipa.sh moveback NEW_UNIT MV_...` on Vulcan, then `mirror`. Next, on TamIA: ALLOW_EXISTING=1 ginipa.sh
+#                             record tamia NEW_UNIT; ginipa.sh submit tamia NEW_UNIT. Restart tamia_relay.sh loop afterwards (it exits
+#                             once no TamIA fold is outstanding).
+#   mirror                    copy the arm root's run table (+ TS, plan.conf, PIN.conf, LAUNCH_INFO) Vulcan -> TamIA through this node
+#                             (`ginipa.sh mirror tamia` needs Vulcan's TamIA master) and point TamIA's state file at it
 set -uo pipefail
-MODE="${1:?usage: push [--dry-run] UNIT... | auto UNIT...}"; shift; POLL_S="${POLL_S:-600}"
+MODE="${1:?usage: push [--dry-run] UNIT... | auto UNIT... | back [--dry-run] NEW_UNIT MV_UNIT... | mirror}"; shift; POLL_S="${POLL_S:-600}"
 V=vulcan.alliancecan.ca; TA=tamia.alliancecan.ca; VREPO=/project/aip-jcohen/paulh/mri_synthesis_project; T=benchmark/02_tasks
 v() { ssh -n -o BatchMode=yes -o ConnectTimeout=30 "${V}" "$1"; }
 t() { ssh -n -o BatchMode=yes -o ConnectTimeout=30 "${TA}" "$1"; }
@@ -46,6 +54,45 @@ push_unit() {   # push_unit UNIT DRY -> 0 ok, 1 refused/failed
   done < <(printf '%s\n' "${RT}" | awk -F'\t' -v u="${U}" 'NR>1 && $8=="tamia" && $9==u {print $1"\t"$2"\t"$16"\t"$17"\t"$18}')
   log "${U}: ${n} unfinished fold(s) pushed"; return 0
 }
+
+mirror() {
+  local TR_="${R/#\/scratch\/paulh\//\/scratch\/p\/paulh\/}" a b
+  ssh -n -o BatchMode=yes "${V}" "cd ${R} && tar cf - run_table.tsv TS plan.conf PIN.conf LAUNCH_INFO" \
+    | ssh -o BatchMode=yes "${TA}" "mkdir -p ${TR_} && tar xf - -C ${TR_} && echo ${TR_} > /scratch/p/paulh/_ginipa_root.txt" || { log "mirror FAILED"; return 1; }
+  a="$(v "md5sum < ${R}/run_table.tsv")"; b="$(t "md5sum < ${TR_}/run_table.tsv")"
+  [ "${a}" = "${b}" ] || { log "mirror: run table md5 differs (Vulcan ${a} / TamIA ${b})"; return 1; }
+  log "mirror: run table -> TamIA ${TR_} (md5 ${a%% *})"
+}
+if [ "${MODE}" = mirror ]; then mirror; exit $?; fi
+
+if [ "${MODE}" = back ]; then
+  DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
+  NU="${1:?back [--dry-run] NEW_UNIT MV_UNIT...}"; shift; [ $# -ge 1 ] && [ $# -le 4 ] || { echo "1-4 MV units"; exit 1; }
+  q="$(queued "${NU}")" || { log "TamIA unreachable"; exit 1; }; [ -z "${q}" ] || { log "REFUSING: TamIA already queues ginipa_${NU}"; exit 1; }
+  RT="$(v "cat ${R}/run_table.tsv")" || { log "no run table"; exit 1; }
+  for MU in "$@"; do
+    row="$(printf '%s\n' "${RT}" | awk -F'\t' -v u="${MU}" 'NR>1 && $8=="vulcan" && $9==u {print $1"\t"$2"\t"$16"\t"$17"\t"$18}')"
+    [ "$(grep -c . <<<"${row}")" = 1 ] || { log "REFUSING: ${MU}: expected one Vulcan run table row"; exit 1; }
+    IFS=$'\t' read -r s f rid tw sd <<<"${row}"
+    vfd="$(v "ls -d ${VREPO}/${T}/*/*/8_results*/01_predictions/*/*/auglab/${rid}/Dataset*/*/fold_${f} 2>/dev/null | head -1")"
+    [ -n "${vfd}" ] && v "[ -f ${vfd}/.ginipa_moved_from_tamia ]" || { log "REFUSING: ${MU}: no Vulcan fold dir with .ginipa_moved_from_tamia"; exit 1; }
+    mk="$(v "cat ${vfd}/.ginipa_moved_from_tamia")"; want="$(tail -n 2 <<<"${mk}")"
+    tfd="$(head -1 <<<"${mk}" | sed -n 's/.* moved from tamia \(\/[^ ]*\) (.*/\1/p')"
+    [ -n "${tfd}" ] || { log "REFUSING: ${MU}: no TamIA path in the marker"; exit 1; }
+    t "[ ! -e ${tfd}/checkpoint_final.pth ]" && v "[ ! -e ${vfd}/checkpoint_final.pth ]" || { log "REFUSING: ${MU}: checkpoint_final exists"; exit 1; }
+    L="$(t "cd ${tfd} && ${Q}")"; M="$(v "cd ${vfd} && ${Q}")"
+    [ "${L}" = "${want}" ] && [ "${M}" = "${want}" ] || { log "REFUSING: ${MU}: checkpoints differ from the marker (TamIA '${L}' / Vulcan '${M}')"; exit 1; }
+    ep="$(t "grep -oE 'Epoch [0-9]+' \$(ls -t ${tfd}/training_log_*.txt | head -1) | tail -1")"
+    log "${MU}: ${s} f${f} identical on TamIA and Vulcan (${ep}); TamIA ${tfd}"
+    [ "${DRY}" = 1 ] || printf '%s\n%s\n' "$(date -u '+%F %T') back to tamia ${tfd} (${ep}; relay $(hostname -s))" "${L}" \
+      | ssh -o BatchMode=yes "${V}" "cat > ${vfd}/.ginipa_back_to_tamia"
+  done
+  [ "${DRY}" = 0 ] || { log "[dry] next: markers, then on Vulcan ginipa.sh moveback ${NU} $* (needs the chains CANCELLED), then mirror"; exit 0; }
+  out="$(v "cd ${VREPO} && bash -lc 'bash scripts/cluster/ginipa/ginipa.sh moveback ${NU} $*'" 2>&1)"; rc=$?; echo "${out}"
+  [ "${rc}" = 0 ] || { log "moveback FAILED rc=${rc} (markers written; rerun after fixing)"; exit 1; }
+  mirror || exit 1
+  exit 0
+fi
 
 if [ "${MODE}" = push ]; then
   DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }

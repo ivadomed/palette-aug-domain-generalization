@@ -14,6 +14,7 @@
 #   bash scripts/cluster/ginipa/ginipa.sh submit <cluster> [--dry-run] [UNIT...]   # vulcan|tamia here; killarney: killarney.sh submit
 #   bash scripts/cluster/ginipa/ginipa.sh move <unit> [--from killarney] [--dry-run]   # Vulcan: TamIA stall -> resume that unit's folds on Vulcan L40S
 #   bash scripts/cluster/ginipa/ginipa.sh mirror tamia            # Vulcan: copy the run table to TamIA's arm root
+#   bash scripts/cluster/ginipa/ginipa.sh moveback <T_unit> [--dry-run] MV_...   # Vulcan: never-started MV units back to TamIA (via tamia_push.sh back)
 #   bash scripts/cluster/ginipa/ginipa.sh retarget <V_unit|K_unit> [--dry-run]   # Vulcan: never-started unit Vulcan <-> Killarney
 #   bash scripts/cluster/ginipa/ginipa.sh status [cluster]       # epoch, median s/epoch, peak VRAM, final, per recorded fold
 #   bash scripts/cluster/ginipa/ginipa.sh shims check|install    # the 9 additive <DS>GinIpaTrainers.py shims in this cluster's venv
@@ -32,7 +33,7 @@ case "${GINIPA_CLUSTER}" in tamia) RB=/scratch/p/paulh ;; *) RB=/scratch/paulh ;
 export SCRATCH="${RB}"
 STATE="${GINIPA_ROOT_FILE:-${RB}/_ginipa_root${PROBE:+_probe}.txt}"
 PLAN="${GINIPA_PLAN:-${GDIR}/plan${PROBE:+_probe}.conf}"
-MODE="${1:?usage: runtable|mirror|record|submit|move|retarget|status|shims|body}"; shift
+MODE="${1:?usage: runtable|mirror|record|submit|move|moveback|retarget|status|shims|body}"; shift
 T=benchmark/02_tasks
 # setting | scripts dir (under benchmark/02_tasks) | train wrapper | TamIA env (scripts/cluster/) | trainer | epochs | dataset name
 B=brain_tumor/brats2024-glioma/5_scripts_brats2024-glioma; C=abdomen_healthy/chaos/5_scripts_chaos; O=brain_healthy/on-harmony/5_scripts_on-harmony
@@ -327,7 +328,9 @@ if [ "${MODE}" = submit ]; then
   if [ "${CL}" = tamia ]; then   # launch rule: at most GINIPA_TAMIA_MAX_NODES (4) whole nodes with a live chain at once
     act=0; new=0
     for u in $(units_of tamia); do UD="${R}/tamia/${u}"; [ -f "${UD}/JOBS.tsv" ] || continue
-      while IFS=$'\t' read -r _ _ _ d; do [ -n "$d" ] && [ -f "$d" ] || { act=$((act + 1)); break; }; done < "${UD}/index.tsv"; done
+      while IFS=$'\t' read -r _ _ name d; do [ -n "$d" ] && [ -f "$d" ] && continue   # unfinished fold: counts only if still a TamIA row of u
+        awk -F'\t' -v r="${name#fold?_}" -v f="${name:4:1}" -v u="${u}" 'NR>1 && $16==r && $2==f && $8=="tamia" && $9==u {x=1} END {exit !x}' "${RT}" \
+          && { act=$((act + 1)); break; }; done < "${UD}/index.tsv"; done
     for u in ${SEL}; do [ -f "${R}/tamia/${u}/JOBS.tsv" ] || new=$((new + 1)); done
     [ $((act + new)) -le "${GINIPA_TAMIA_MAX_NODES:-4}" ] || { echo "REFUSING: ${act} TamIA units still training + ${new} new > ${GINIPA_TAMIA_MAX_NODES:-4} nodes (launch rule)"; exit 1; }
     echo "[submit] TamIA nodes: ${act} active + ${new} new <= ${GINIPA_TAMIA_MAX_NODES:-4}"
@@ -345,7 +348,8 @@ if [ "${MODE}" = submit ]; then
     [ -z "${PROBE:-}" ] || { nseg=1; st=00:50:00; }
     body="$(write_body "${UD}" "${CL}")"
     case "${CL}" in
-      tamia)  RES=(--nodes=1 --gpus-per-node=h100:4 --cpus-per-task=48 --mem=0) ;;
+      tamia)  RES=(--nodes=1 --gpus-per-node=h100:4 --cpus-per-task=48 --mem=0)   # tg10807: Lustre eviction 2026-11-07, hung GPU jobs
+              [ -z "${GINIPA_TAMIA_EXCLUDE-tg10807}" ] || RES+=(--exclude="${GINIPA_TAMIA_EXCLUDE-tg10807}") ;;
       vulcan) RES=(--gres=gpu:l40s:1 --cpus-per-task=16 --mem=110G --exclude=rack02-06) ;;
     esac
     common=(--account=aip-jcohen "${RES[@]}" --time="${st}" --job-name="${TAG}${PROBE:+probe}_${u}" --output="${UD}/seg_%j.out")
@@ -432,6 +436,53 @@ if [ "${MODE}" = move ]; then
   fi
   echo "next: ALLOW_EXISTING=1 bash scripts/cluster/ginipa/ginipa.sh record vulcan${NEWU} && bash scripts/cluster/ginipa/ginipa.sh submit vulcan${NEWU}"
   echo "      then: bash scripts/cluster/ginipa/ginipa.sh mirror tamia   (post_poller.sh reads the updated run table: these folds become vulcan folds)"
+  exit 0
+fi
+
+# -------------------------------------------------------------------------------------------------------------- moveback
+# moveback <new TamIA unit> [--dry-run] MV_<s>_f<k>...: the inverse of `move --from relay`, for MV units that NEVER STARTED on Vulcan (Vulcan
+#   queue stalled, TamIA free again). TamIA still holds the same fold dirs, so nothing is copied. Order:
+#   1. Vulcan: scancel every job of the MV chains;  2. Killarney: tamia_push.sh back <new unit> MV_...  (checks TamIA + Vulcan checkpoints
+#   against .ginipa_moved_from_tamia, writes .ginipa_back_to_tamia, runs this mode, then mirrors the run table to TamIA);
+#   3. TamIA: ALLOW_EXISTING=1 ginipa.sh record tamia <new unit>; ginipa.sh submit tamia [--dry-run] <new unit>.
+#   Here: 1-4 MV units (one fold per H100), every job of each chain CANCELLED, the marker present, Vulcan checkpoint_latest / best unchanged
+#   since it, no checkpoint_final; rows -> cluster tamia, unit <new>, GPU 0.. in argument order, GINIPA_BACK_SEGS (2) x GINIPA_BACK_SEG_TIME
+#   (23:59:00); the MV unit dirs move to _superseded_retarget/ (JOBS.tsv kept as JOBS.tsv.cancelled_<ts>).
+if [ "${MODE}" = moveback ]; then
+  [ "${GINIPA_CLUSTER}" = vulcan ] || { echo "moveback runs on Vulcan"; exit 1; }
+  NU="${1:?moveback <new TamIA unit> [--dry-run] MV_unit...}"; shift; DRY=0; [ "${1:-}" = --dry-run ] && { DRY=1; shift; }
+  [ $# -ge 1 ] && [ $# -le 4 ] || { echo "REFUSING: 1-4 MV units (one fold per H100)"; exit 1; }
+  [ -z "$(rows_of tamia "${NU}")" ] && [ ! -e "${R}/tamia/${NU}" ] || { echo "REFUSING: TamIA unit ${NU} already exists"; exit 1; }
+  SUP="${R}/_superseded_retarget"; stamp="$(date +%Y%m%d_%H%M%S)"; MK=.ginipa_back_to_tamia; MAP=""; i=0
+  Q2='for f in checkpoint_latest.pth checkpoint_best.pth; do [ -f $f ] && echo $f $(stat -c %s $f) $(md5sum < $f | cut -c1-32); done; true'
+  for MU in "$@"; do
+    UD="${R}/vulcan/${MU}"; [ -f "${UD}/JOBS.tsv" ] || { echo "REFUSING: no ${UD}/JOBS.tsv"; exit 1; }
+    [ ! -e "${SUP}/${MU}" ] || { echo "REFUSING: ${SUP}/${MU} exists"; exit 1; }
+    for j in $(cut -f3 "${UD}/JOBS.tsv" | tr ',' ' '); do
+      st="$(sacct -j "${j}" -X -n -o State | head -1 | tr -d ' ')"
+      [[ "${st}" == CANCELLED* ]] || { echo "REFUSING: ${MU} job ${j} is ${st:-unknown} (scancel the whole chain first)"; exit 1; }
+    done
+    row="$(rows_of vulcan "${MU}")"; [ "$(grep -c . <<<"${row}")" = 1 ] || { echo "REFUSING: ${MU}: expected one run table row"; exit 1; }
+    IFS=$'\t' read -r s f dn tc ep tr ld cl unit g seg st cm cfg md5 rid tw sd <<<"${row}"
+    envf="$(grep -o 'source "$(dirname "$0")/../00_utils/env[a-z0-9_]*\.sh"' "${T}/${sd}/04_train/${tw}" | sed 's|.*/00_utils/||; s|"$||')"
+    VRD="$( source "${T}/${sd}/00_utils/${envf}" >/dev/null 2>&1; echo "${PREDICTIONS_ROOT}/${MODEL_TYPE}/${TRAINING_CONTRAST}/auglab/${rid}" )"
+    vfd="$(ls -d "${VRD}"/Dataset*/*__nnUNetPlans__3d_fullres/fold_${f} 2>/dev/null | head -1 || true)"
+    [ -n "${vfd}" ] && [ -f "${vfd}/${MK}" ] || { echo "REFUSING: ${s} f${f}: no ${MK} under ${VRD} (run tamia_push.sh back on Killarney)"; exit 1; }
+    [ ! -e "${vfd}/checkpoint_final.pth" ] || { echo "REFUSING: ${s} f${f} has checkpoint_final on Vulcan"; exit 1; }
+    [ "$(cd "${vfd}" && bash -c "${Q2}")" = "$(tail -n 2 "${vfd}/${MK}")" ] || { echo "REFUSING: ${s} f${f}: Vulcan checkpoints changed since ${MK}"; exit 1; }
+    echo "[moveback] ${s} f${f} (${MU}) -> TamIA ${NU} GPU ${i}: $(head -1 "${vfd}/${MK}")"
+    MAP="${MAP} ${s}:${f}:${MU}:${i}"; i=$((i + 1))
+  done
+  [ "${DRY}" = 0 ] || { echo "[dry] would: run table rows -> tamia/${NU} (GPU 0-$((i - 1)), ${GINIPA_BACK_SEGS:-2} x ${GINIPA_BACK_SEG_TIME:-23:59:00}); mv ${*/#/${R}/vulcan/} -> ${SUP}/"; exit 0; }
+  mkdir -p "${R}/_launch" "${SUP}"
+  cp "${RT}" "${RT}.bak_moveback_${NU}_${stamp}"
+  awk -F'\t' -v OFS='\t' -v m="${MAP} " -v nu="${NU}" -v ns="${GINIPA_BACK_SEGS:-2}" -v nt="${GINIPA_BACK_SEG_TIME:-23:59:00}" \
+    'NR>1 && $8=="vulcan" && (k = index(m, " "$1":"$2":"$9":")) {g = substr(m, k + length(" "$1":"$2":"$9":"), 1); $8="tamia"; $9=nu; $10=g; $11=ns; $12=nt} {print}' \
+    "${RT}" > "${RT}.new" && mv "${RT}.new" "${RT}"
+  [ "$(rows_of tamia "${NU}" | grep -c .)" = "${i}" ] || { echo "ERROR: ${NU} has $(rows_of tamia "${NU}" | grep -c .) rows, expected ${i} (backup ${RT}.bak_moveback_${NU}_${stamp})"; exit 1; }
+  for MU in "$@"; do mv "${R}/vulcan/${MU}" "${SUP}/${MU}"; mv "${SUP}/${MU}/JOBS.tsv" "${SUP}/${MU}/JOBS.tsv.cancelled_${stamp}"; done
+  echo "$(date '+%F %T') moved never-started Vulcan units $* (chains cancelled, TamIA + Vulcan checkpoints md5-checked) back to TamIA unit ${NU}" | tee -a "${R}/MOVES.log" "${R}/_launch/LAUNCH_LOG.txt" >> "${R}/LAUNCH_INFO"
+  echo "next (Killarney): tamia_push.sh mirror;  (TamIA): ALLOW_EXISTING=1 bash scripts/cluster/ginipa/ginipa.sh record tamia ${NU} && bash scripts/cluster/ginipa/ginipa.sh submit tamia --dry-run ${NU}"
   exit 0
 fi
 
