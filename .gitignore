@@ -105,3 +105,7 @@ benchmark/02_tasks/pancreas_disease/pansegdata/0_raw_pansegdata/*name_mapping.js
 
 # AugLab is its own git repo (branch palette, own GitHub remote).
 sub-workspaces/auglab_workspace/
+
+# Private research material: DG-mechanisms workspace (local git, no remote) and literature knowledge bases (2026-11-12)
+research/dg_mechanisms/
+docs/literature/
