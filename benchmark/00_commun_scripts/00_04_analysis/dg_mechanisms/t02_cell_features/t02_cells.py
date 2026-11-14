@@ -51,6 +51,12 @@ SHORT = {"synthseg_noEM": "ssnoem", "synthseg_EM": "ssem", "baseline": "plain", 
 RANDOMISED = ["synthseg_EM", "auglab_default", PA, REF]      # P15's "best randomised arm" pool
 
 
+def _dataset_of(metrics_dir) -> str:
+    """Dataset name of a metrics dir (.../02_tasks/<task>/<dataset>/...); the path itself if not under 02_tasks."""
+    parts = Path(metrics_dir).parts
+    return parts[parts.index("02_tasks") + 2] if "02_tasks" in parts else Path(metrics_dir).as_posix()
+
+
 def ladder_rungs() -> dict:
     """(task, modality) -> {flat, noise, real} run keys from the ladder_series.json files of the paper's texture tables."""
     out = {}
@@ -362,7 +368,9 @@ def main():
             row.update(spec_setting="", spec_arm="", dice_spec=np.nan, spec_same_items="")
             continue
         best = max(spec["vals"], key=lambda k: spec["vals"][k])
-        same = {(Path(m).as_posix(), g, cs) for m, g, cs in spec["cases"]} == {(Path(m).as_posix(), g, cs) for m, g, cs in mine_cases}
+        # same items = same dataset, eval group and case ids; the metrics dir itself differs by training contrast
+        # (<model>/<training contrast>/...), so it is reduced to the dataset name before comparing.
+        same = {(_dataset_of(m), g, cs) for m, g, cs in spec["cases"]} == {(_dataset_of(m), g, cs) for m, g, cs in mine_cases}
         row.update(spec_setting=spec["setting"], spec_arm=SHORT[best], dice_spec=spec["vals"][best],
                    spec_same_items=str(same), spec_n_cases=len(spec["cases"]))
 
