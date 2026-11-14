@@ -28,6 +28,9 @@ R = Path("/project/aip-jcohen/paulh/mri_synthesis_project")
 V2 = R / "benchmark/00_commun_scripts/00_04_analysis/gain_decomposition/v2"
 E1 = R / "benchmark/01_commun_results/gain_decomposition/v2/e1_signed_boundary"
 PAPER = R / "paper/scripts"
+# Headline predictions missing from the repo tree but copied from TamIA (byte-identical, md5-checked) are read from this
+# scratch mirror of the repo layout; used only when the repo tree has no hit. Roster column how = "staged".
+STAGE = Path("/scratch/paulh/dg_mechanisms/T04/staged_predictions")
 for p in (V2, E1):
     sys.path.insert(0, str(p))
 import decompose_v2 as dv  # noqa: E402
@@ -102,6 +105,15 @@ def pred_dir(st: dict, it: dict, arm: str, rid: str, fold: int):
     cands = [Path(h) for h in cands if Path(h).is_dir()]
     if len(cands) == 1:
         return cands[0], "glob"
+    if not cands and STAGE.is_dir():
+        sbase = STAGE / base.relative_to(R)
+        if arm == "srcsm":
+            st_c = [h for s in subs for h in glob.glob(str(sbase / "*" / plain / f"fold{fold}" / s))]
+        else:
+            st_c = glob.glob(str(sbase / "*" / rid / f"fold{fold}" / sub))
+        st_c = [Path(h) for h in st_c if Path(h).is_dir()]
+        if len(st_c) == 1:
+            return st_c[0], "staged"
     return None, f"absent ({len(cands)} hits)"
 
 
