@@ -97,6 +97,10 @@ else
     _JOB_RESULTS="${RUN_DIR}"
 fi
 
+# PREDICT_OUTPUT_BASE (optional, default ""): write the predictions and _logs/ under this root instead of _OUT_BASE
+# (the model is still read from RUN_DIR). For staging re-predictions outside the 01_predictions tree.
+if [ -n "${PREDICT_OUTPUT_BASE:-}" ]; then _OUT_BASE="${PREDICT_OUTPUT_BASE}"; fi
+
 [ -d "$RUN_DIR" ] || { echo "ERROR: run dir not found: $RUN_DIR" >&2; exit 1; }
 
 predict_fold() {
