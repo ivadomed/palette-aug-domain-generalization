@@ -35,8 +35,10 @@ moved to index space (the registration's units) before the gate was run (REPORT.
   - Per case: medians over the kept points; per item: medians over cases.
 Gate (registered): on 3 items per task (first 3 item keys in sorted order; MS has 2 and Pelvis 1 OOD item in scope), GT
 dilated by one voxel (6-connected structuring element, 1 iteration): item E_vox must rise by 0.7-1.3; eroded: fall by 0.7-1.3.
+T28b (plans/2026-11-16-PREDICTION_T28b.md, sha256 0d47f4af...): --mode gateall runs the same gate on every T27
+(setting, item) row (own cases), writes gate_all.tsv and keeps going; t28b_score.py keeps the rows passing both directions.
 Smoke: --mode smoke --limit N runs N files per gate item, original + dilated (code-path check only, no gate decision).
-Usage (Slurm only): .venv/bin/python t28_edge.py --mode gate|full --out DIR [--workers 16]
+Usage (Slurm only): .venv/bin/python t28_edge.py --mode gate|gateall|full --out DIR [--workers 16]
 """
 from __future__ import annotations
 
@@ -267,7 +269,7 @@ def gate_items(D: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["gate", "full", "smoke"], required=True)
+    ap.add_argument("--mode", choices=["gate", "gateall", "full", "smoke"], required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--limit", type=int, default=1)
@@ -277,6 +279,8 @@ def main():
     D = scope()
     if a.mode == "gate":
         D = gate_items(D)
+        variants = ["orig", "dilate", "erode"]
+    elif a.mode == "gateall":                       # T28b: the same gate on every T27 (setting, item) row
         variants = ["orig", "dilate", "erode"]
     elif a.mode == "smoke":
         D = gate_items(D)
@@ -314,18 +318,21 @@ def main():
     agg.to_csv(out / f"items_edge_{a.mode}.tsv", sep="\t", index=False)
     pd.set_option("display.width", 250)
     print(agg.round(3).to_string())
-    if a.mode == "gate":
+    if a.mode in ("gate", "gateall"):
         P = agg.pivot_table(index=["task", "setting", "item_key"], columns="variant", values="E_vox").reset_index()
         P["dE_dilate_vox"] = P["dilate"] - P["orig"]
         P["dE_erode_vox"] = P["erode"] - P["orig"]
         P["ok_dilate"] = P.dE_dilate_vox.between(GATE_LO, GATE_HI)
         P["ok_erode"] = (-P.dE_erode_vox).between(GATE_LO, GATE_HI)
         P["ok"] = P.ok_dilate & P.ok_erode
-        P.to_csv(out / "gate.tsv", sep="\t", index=False)
+        P["failing"] = ["" if o else "+".join(x for x, f in (("dilate", od), ("erode", oe)) if not f)
+                        for o, od, oe in zip(P.ok, P.ok_dilate, P.ok_erode)]
+        P.to_csv(out / ("gate.tsv" if a.mode == "gate" else "gate_all.tsv"), sep="\t", index=False)
         print(P.round(3).to_string())
         passed = bool(P.ok.all()) and len(P) > 0
         print("GATE:", "PASS" if passed else "FAIL", f"{int(P.ok.sum())}/{len(P)} items", flush=True)
-        sys.exit(0 if passed else 3)
+        if a.mode == "gate":
+            sys.exit(0 if passed else 3)       # T28: a failure stops the test; T28b keeps the passing items
 
 
 if __name__ == "__main__":

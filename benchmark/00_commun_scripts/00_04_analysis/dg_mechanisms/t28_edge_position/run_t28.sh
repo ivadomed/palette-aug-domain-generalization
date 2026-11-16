@@ -5,14 +5,17 @@
 # all read-only.
 #   bash run_t28.sh smoke   -> one case per gate item, quick check (scratch output)
 #   bash run_t28.sh gate    -> response gate (dilate / erode by one voxel on 3 items per task); exit 3 if it fails
+#   bash run_t28.sh gateall -> T28b (plans/2026-11-16-PREDICTION_T28b.md): the gate on all 46 T27 rows, then t28b_score.py
+#                             (outputs benchmark/01_commun_results/dg_mechanisms/T28b/)
 #   bash run_t28.sh full    -> E and W on every T27 item, then the registered rules (t28_score.py)
 # Outputs: benchmark/01_commun_results/dg_mechanisms/T28/ (untracked); job ids appended to submitted_jobs.txt
 set -euo pipefail
-MODE=${1:?usage: run_t28.sh smoke|gate|full}
+MODE=${1:?usage: run_t28.sh smoke|gate|gateall|full}
 ROOT=/project/aip-jcohen/paulh/mri_synthesis_project
 HERE=${ROOT}/benchmark/00_commun_scripts/00_04_analysis/dg_mechanisms/t28_edge_position
 OUT=${ROOT}/benchmark/01_commun_results/dg_mechanisms/T28
 SCR=/scratch/paulh/dg_mechanisms/T28
+[ "${MODE}" = gateall ] && OUT=${ROOT}/benchmark/01_commun_results/dg_mechanisms/T28b
 export RUN_JOB_ACCOUNT=aip-jcohen
 cd "${ROOT}"; source scripts/job_runner/run_job.sh
 mkdir -p "${OUT}/logs" "${SCR}"
@@ -23,6 +26,8 @@ case "${MODE}" in
          j=$(run_job --name t28_smoke --gpus 0 --cpus 4 --mem 24G --time 00:30:00 --log "${OUT}/logs/t28_smoke.log" -- bash -c "${CMD}" | awk '{print $NF}');;
   gate)  CMD="${ENVS}; ${PY} ${HERE}/t28_edge.py --mode gate --workers 16 --out ${OUT}"
          j=$(run_job --name t28_gate --gpus 0 --cpus 16 --mem 64G --time 03:00:00 --log "${OUT}/logs/t28_gate.log" -- bash -c "${CMD}" | awk '{print $NF}');;
+  gateall) CMD="${ENVS}; ${PY} ${HERE}/t28_edge.py --mode gateall --workers 16 --out ${OUT} && cd ${HERE} && ${PY} ${HERE}/t28b_score.py --out ${OUT}"
+         j=$(run_job --name t28b_gateall --gpus 0 --cpus 16 --mem 64G --time 03:00:00 --log "${OUT}/logs/t28b_gateall.log" -- bash -c "${CMD}" | awk '{print $NF}');;
   full)  CMD="${ENVS}; ${PY} ${HERE}/t28_edge.py --mode full --workers 16 --out ${OUT} && ${PY} ${HERE}/t28_score.py --out ${OUT}"
          j=$(run_job --name t28_full --gpus 0 --cpus 16 --mem 64G --time 04:00:00 --log "${OUT}/logs/t28_full.log" -- bash -c "${CMD}" | awk '{print $NF}');;
   *) echo "unknown mode ${MODE}"; exit 2;;
