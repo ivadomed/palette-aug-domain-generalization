@@ -50,8 +50,8 @@ case "${WHAT}" in
   dev12)
     D12="${OUT}/dev12"; mkdir -p "${D12}/rows" "${D12}/qc" "${D12}/prov" "${D12}/logs"
     for sub in rows qc; do for f in "${OUT}/${sub}"/*.parquet; do
-      case "${f}" in *.smoke.parquet) continue ;; esac; cp -n -p "${f}" "${D12}/${sub}/"; done; done
-    for f in "${OUT}"/prov/*.tsv; do case "${f}" in *.smoke.tsv) continue ;; esac; cp -n -p "${f}" "${D12}/prov/"; done
+      case "${f}" in *.smoke.parquet) continue ;; esac; [ -e "${D12}/${sub}/${f##*/}" ] || cp -p "${f}" "${D12}/${sub}/"; done; done
+    for f in "${OUT}"/prov/*.tsv; do case "${f}" in *.smoke.tsv) continue ;; esac; [ -e "${D12}/prov/${f##*/}" ] || cp -p "${f}" "${D12}/prov/"; done
     DEV_NEW="Glioma_t1c Glioma_t2f Pelvis_ct Pelvis_mri"; DEV_ALL="Glioma_t1c,Glioma_t2f,Pelvis_ct,Pelvis_mri,Glioma_t1n,Glioma_t2w"
     ids=""
     for S in ${DEV_NEW}; do
