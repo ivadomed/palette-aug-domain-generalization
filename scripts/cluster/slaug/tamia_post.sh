@@ -67,7 +67,8 @@ record)   # TamIA login node
       [ "$(grep -o -- "-d ${dsid} -c 3d_fullres" "$cf" | wc -l)" = "${nitem}" ] || e="${e} -d${dsid}x${nitem}"
       [ "$(grep -o -- "--disable_tta -chk checkpoint_best.pth" "$cf" | wc -l)" = "${nitem}" ] || e="${e} best/no-tta"
       grep -q "slaug_pin/2a8cfde30fc9/AugLab" "$cf" || e="${e} pin"
-      grep -q "\-i '/scratch/p/paulh/" "$cf" && grep -q "\-o '/scratch/p/paulh/" "$cf" || e="${e} scratch-io"
+      for io in -i -o; do   # recorded inside a $'...' string: quotes appear as \'
+        [ "$(tr -d '\\' < "$cf" | grep -o -- "${io} '/scratch/p/paulh/" | wc -l)" = "${nitem}" ] || e="${e} scratch${io}"; done
       grep -q "CUDA_VISIBLE_DEVICES" "$cf" && e="${e} inner-CUDA"
       [ "$g" != onh ] || [ "$(grep -o "05_02_resample_predictions_to_native.py" "$cf" | wc -l)" = 6 ] || e="${e} resample"
       [ -z "$e" ] || { log "ERROR ${s} ${cf}: check failed:${e}"; exit 1; }
