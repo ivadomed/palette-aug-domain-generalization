@@ -53,7 +53,7 @@ case "${MODE}" in
 record)   # TamIA login node
   export SCRATCH=/scratch/p/paulh; PT="${TROOT}/post_tamia"; mkdir -p "${PT}"
   log "record at HEAD $(git rev-parse --short HEAD) ($(git status --porcelain -- scripts benchmark/00_commun_scripts ${B} ${O} | grep -vc '^??') tracked edits)"
-  for r in "${ROWS[@]}"; do IFS='|' read -r s g dir envf tenv tc wr ds <<<"$r"; R_="$(rid "$s")"; PD="${PT}/${s}/pack"
+  for r in "${ROWS[@]}"; do IFS='|' read -r s g dir envf tenv tc wr ds <<<"$r"; R_="$(rid "$s")"; PD="${PT}/${s}/pack"; mkdir -p "${PT}/${s}"
     [ ! -e "${PD}/index.tsv" ] || { log "REFUSING: ${PD}/index.tsv exists (move the pack dir aside to re-record)"; exit 1; }
     [ "$(awk -F'\t' -v s="$s" 'NR>1 && $1==s {print $16}' "${TROOT}/run_table.tsv" | sort -u)" = "${R_}" ] || { log "REFUSING: ${s} run id != ${R_} in the run table"; exit 1; }
     ( envsetup "${dir}" "${envf}" "${tenv}" "${tc}" "${g}"; P="${PREDICTIONS_ROOT}/${MODEL_TYPE}/${tc}/auglab/${R_}"
